@@ -457,6 +457,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bot = [
+    { name = "aiogram" },
+    { name = "psycopg", extra = ["binary"] },
+]
 db = [
     { name = "psycopg", extra = ["binary"] },
 ]
@@ -472,12 +476,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiogram", marker = "extra == 'telegram'", specifier = ">=3" },
+    { name = "philippe", extras = ["telegram", "db"], marker = "extra == 'bot'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'db'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2" },
     { name = "python-dotenv", specifier = ">=1" },
     { name = "pyyaml", specifier = ">=6" },
 ]
-provides-extras = ["telegram", "db"]
+provides-extras = ["telegram", "db", "bot"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=7" }]

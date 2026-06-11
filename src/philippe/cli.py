@@ -26,7 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_form_arg(p_validate)
 
     p_run = sub.add_parser("run", help="run the Telegram bot")
-    _add_form_arg(p_run)
+    p_run.add_argument("--form", action="append", dest="forms", metavar="PATH",
+                       help="a form.yaml to offer (repeatable)")
+    p_run.add_argument("--forms-dir", type=Path,
+                       help="offer every *.yaml in this directory")
     p_run.add_argument("--token", help="bot token (else $PHILIPPE_BOT_TOKEN / .env)")
     p_run.add_argument("--database-url", help="Postgres DSN (else $DATABASE_URL / .env); "
                                               "without it records are only logged")
@@ -42,6 +45,28 @@ def _load(form_path: Path):
     except FormError as e:
         print(f"error: {e}", file=sys.stderr)
         raise SystemExit(2)
+
+
+def _load_forms(paths, forms_dir: Path | None) -> dict:
+    """Load all requested forms into a {name: FormSpec} dict (name-keyed so the
+    /forms menu and form-selection can address them)."""
+    files = [Path(p) for p in (paths or [])]
+    if forms_dir:
+        files += sorted(forms_dir.glob("*.yaml"))
+    if not files:
+        print("error: no forms — pass --form PATH (repeatable) or --forms-dir DIR",
+              file=sys.stderr)
+        raise SystemExit(2)
+
+    forms: dict = {}
+    for path in files:
+        form = _load(path)
+        if form.name in forms:
+            print(f"error: two forms share the name '{form.name}' ({path})",
+                  file=sys.stderr)
+            raise SystemExit(2)
+        forms[form.name] = form
+    return forms
 
 
 def cmd_validate(args) -> None:
@@ -61,29 +86,29 @@ def cmd_run(args) -> None:
         load_env(args.env_file)
     logging.basicConfig(level=args.log_level.upper(),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    form = _load(args.form)
+    forms = _load_forms(args.forms, args.forms_dir)
     try:
         from .telegram.bot import run_bot
     except ImportError as e:
         print(f"error: the Telegram adapter needs aiogram installed "
-              f"(`uv sync --extra telegram`): {e}", file=sys.stderr)
+              f"(`uv sync --extra bot`): {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    sink, catalog = _build_db(form, resolve_database_url(args.database_url))
-    run_bot(form, resolve_token(args.token), sink=sink, catalog=catalog)
+    sink, catalog = _build_db(forms.values(), resolve_database_url(args.database_url))
+    run_bot(forms, resolve_token(args.token), sink=sink, catalog=catalog)
 
 
-def _build_db(form, dsn: str | None):
+def _build_db(forms, dsn: str | None):
     """Return (sink, catalog). With a DSN → SQL sink + catalog; without → the
-    logging sink, unless the form actually requires a database."""
+    logging sink, warning about any forms that won't work until a DB is set."""
     from .db.resolve import form_needs_db
 
     if not dsn:
-        if form_needs_db(form):
-            print("error: this form needs a database (dynamic options or context "
-                  "columns) — set DATABASE_URL or pass --database-url",
+        needs_db = [f.name for f in forms if form_needs_db(f)]
+        if needs_db:
+            print(f"warning: forms {needs_db} need a database (dynamic options or "
+                  f"context columns) and will fail to start until DATABASE_URL is set",
                   file=sys.stderr)
-            raise SystemExit(2)
         from .sink import LoggingSink
         return LoggingSink(), None
 

@@ -71,7 +71,7 @@ philippe/
 │       ├── telegram/              # ── Telegram driving adapter (aiogram) ──
 │       │   ├── __init__.py
 │       │   ├── bot.py             #   build bot + dispatcher, wire handlers
-│       │   ├── handlers.py        #   /start, text, callback, media handlers
+│       │   ├── handlers.py        #   /forms menu, /start, text, callback handlers
 │       │   ├── keyboards.py       #   Prompt.buttons → inline/reply keyboard
 │       │   └── render.py          #   Prompt → message text; Update → Input
 │       │
@@ -240,12 +240,15 @@ translator in both directions:
 - **inbound** (`render.py`): an aiogram `Update` → a domain `Input`.
 - **outbound** (`keyboards.py` + `render.py`): a domain `Prompt` → message text
   + inline keyboard (appending the `Back` button supplied by the engine).
-- **`handlers.py`**: `/start` creates a session and runs the engine; every
+- **`handlers.py`**: the bot can offer **several forms**. `/forms` (and
+  `/start`) shows a menu of `Pick a form` buttons; tapping one resolves that
+  form's dynamic options and starts a session. From then on every
   message/callback loads the session, feeds the `Input` to the engine, and
   renders the resulting `Prompt`. A `Prompt` produced by a **button tap is
   rendered with `edit_text`** (the existing message updates in place); one
-  produced by a **text message or `/start` is a new `answer`**. This is what
-  keeps `repeat`'s two taps on a single message instead of re-sending it.
+  produced by a **text message is a new `answer`**. This is what keeps
+  `repeat`'s two taps on a single message instead of re-sending it. (The
+  multi-form menu is an adapter concept — the engine still drives one form.)
 
 Swapping to a different chat platform = a new sibling adapter, core untouched.
 

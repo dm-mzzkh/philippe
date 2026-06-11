@@ -12,7 +12,9 @@ def connect(dsn: str) -> Any:
         import psycopg
     except ImportError as e:  # pragma: no cover - exercised only without the extra
         raise RuntimeError(
-            "database features need psycopg — install with `uv sync --extra db`"
+            "database features need psycopg — install with `uv sync --extra bot` "
+            "(note: `uv sync` extras are not additive, so install bot/telegram/db "
+            "in one command)"
         ) from e
     # autocommit: each INSERT is its own row, and option SELECTs at /start don't
     # leave an idle-in-transaction snapshot open between dialogs.

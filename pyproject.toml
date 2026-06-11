@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 telegram = ["aiogram>=3"]
 db = ["psycopg[binary]>=3"]
+# everything needed to actually run the bot against a database — `uv sync`
+# extras are NOT additive, so install both at once via this combined extra.
+bot = ["philippe[telegram,db]"]
 
 [dependency-groups]
 dev = ["pytest>=7"]

@@ -14,14 +14,17 @@ tables (`tasks`, `logs`) plus a `task_period` enum — see
 # 1. Start Postgres (and pgweb on :8081) — from the db/ folder:
 cd db && docker compose up -d
 
-# 2. Install the bot with the DB + Telegram extras:
-uv sync --extra db --extra telegram
+# 2. Install the bot with aiogram + psycopg (one combined extra; `uv sync`
+#    extras are not additive, so don't run them in separate commands):
+uv sync --extra bot
 
 # 3. Point the bot at the DB and your token (in .env, see .env.example):
 #    DATABASE_URL=postgresql://bot:bot@localhost:5432/bot_dev
 #    PHILIPPE_BOT_TOKEN=...
-uv run philippe run --form examples/log.yaml
+uv run philippe run --form examples/task.yaml --form examples/log.yaml
 ```
+
+In the bot, `/forms` lists the offered forms; tap one to fill it.
 
 - With `DATABASE_URL` set, completed forms are **INSERT**ed into `table`.
 - Without it, records are only logged — and a form that *needs* the DB (dynamic

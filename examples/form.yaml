@@ -1,9 +1,9 @@
-# Example form exercising every Philippe field type.
+# Example form exercising every Philippe field type (a showcase, not tied to the
+# home_cal DB — it has no `table`, so submitting just logs the record).
 # See docs/form-schema.md for the full reference.
 
-name: task
-title: New task
-table: tasks
+name: demo
+title: Demo (all field types)
 
 fields:
   # Short text — typed or sent as a voice message.

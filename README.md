@@ -58,10 +58,15 @@ dependencies on the first `uv run` — no manual setup. The Telegram adapter is
 an optional extra:
 
 ```bash
-uv sync                              # core deps + dev tools (pytest)
-uv sync --extra telegram             # also aiogram, needed for `run`
-uv sync --extra telegram --extra db  # also psycopg, to write to Postgres
+uv sync                  # core deps + dev tools (pytest)
+uv sync --extra telegram # also aiogram, needed for `run`
+uv sync --extra bot      # aiogram + psycopg — run the bot against Postgres
 ```
+
+> `uv sync` extras are **not additive** — each `uv sync` makes the environment
+> match exactly the extras you pass. Install everything in one command (that's
+> what the combined `bot` extra is for); running `--extra db` then
+> `--extra telegram` would uninstall psycopg again.
 
 Two commands (`uv run python -m philippe …` also works):
 
@@ -69,11 +74,14 @@ Two commands (`uv run python -m philippe …` also works):
 # Check a form loads and see its fields — no token needed:
 uv run philippe validate --form examples/form.yaml
 
-# Run the real Telegram bot (needs the token, see below):
-uv run philippe run      --form examples/form.yaml
+# Run the real Telegram bot (needs the token, see below).
+# Offer several forms with repeated --form, or a whole directory:
+uv run philippe run --form examples/task.yaml --form examples/log.yaml
+uv run philippe run --forms-dir examples
 ```
 
-The bot registers `/start`, which begins the form dialog from the first field.
+In the bot, **`/forms`** (and `/start`) lists the forms to fill; tapping one
+begins its dialog from the first field.
 
 ### Providing the bot token (`.env`)
 
@@ -100,7 +108,7 @@ bot INSERTs each completed form as a row:
 ```bash
 cd db && docker compose up -d         # Postgres on :5432, pgweb on :8081
 # .env → DATABASE_URL=postgresql://bot:bot@localhost:5432/bot_dev
-uv run philippe run --form examples/log.yaml
+uv run philippe run --form examples/task.yaml --form examples/log.yaml
 ```
 
 Without `DATABASE_URL` records are only logged. See
