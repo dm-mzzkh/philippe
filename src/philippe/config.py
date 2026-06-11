@@ -1,0 +1,41 @@
+"""Runtime settings, assembled from CLI args and environment variables."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+TOKEN_ENV = "PHILIPPE_BOT_TOKEN"
+
+
+def load_env(path: str | Path | None = None) -> None:
+    """Load variables from a ``.env`` file into the environment.
+
+    Existing environment variables win over ``.env`` (so an explicit
+    ``PHILIPPE_BOT_TOKEN=… uv run …`` overrides the file). No-op if the file is
+    missing, or if ``python-dotenv`` is not installed.
+    """
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:
+        return
+    dotenv_path = str(path) if path else find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path, override=False)
+
+
+@dataclass
+class Settings:
+    form_path: Path
+    token: str | None = None
+    log_level: str = "INFO"
+
+
+def resolve_token(explicit: str | None) -> str:
+    token = explicit or os.environ.get(TOKEN_ENV)
+    if not token:
+        raise SystemExit(
+            f"No bot token. Pass --token or set {TOKEN_ENV} in the environment."
+        )
+    return token
