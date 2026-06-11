@@ -22,8 +22,11 @@ def run_bot(
     token: str,
     sink: RecordSink | None = None,
     store: SessionStore | None = None,
+    catalog=None,
 ) -> None:
-    runner = Runner(form, sink or LoggingSink(), store or MemorySessionStore())
+    runner = Runner(
+        form, sink or LoggingSink(), store or MemorySessionStore(), catalog=catalog
+    )
     dispatcher = build_dispatcher(runner)
     bot = Bot(token)
 

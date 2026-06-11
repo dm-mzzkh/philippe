@@ -78,8 +78,17 @@ philippe/
 │       ├── sink/                  # ── where a finished record goes (port + impls) ──
 │       │   ├── __init__.py
 │       │   ├── base.py            #   RecordSink protocol
-│       │   ├── logging.py         #   MVP: log/echo the assembled record
-│       │   └── sql.py             #   roadmap: INSERT/UPDATE via SQLAlchemy
+│       │   ├── logging.py         #   log/echo the assembled record (no DB)
+│       │   └── sql.py             #   INSERT one row; per-column type casts
+│       │
+│       ├── db/                    # ── database access (psycopg only in connection) ──
+│       │   ├── __init__.py
+│       │   ├── connection.py      #   connect(dsn) — the only psycopg import
+│       │   ├── catalog.py         #   Catalog port + SqlCatalog (dynamic options)
+│       │   ├── resolve.py         #   resolve_form: materialize dynamic selects
+│       │   └── identifiers.py     #   safe SQL identifier quoting
+│       │
+│       ├── context.py             #   map a form's context columns ← message values
 │       │
 │       └── transcribe/            # ── roadmap: voice → text (port + impls) ──
 │           ├── __init__.py
@@ -242,10 +251,31 @@ Swapping to a different chat platform = a new sibling adapter, core untouched.
 
 ### `sink/` — where the record lands (port)
 
-`RecordSink.save(form: FormSpec, record: dict) -> None`. MVP uses
-`logging.py` (echo the assembled record — matches the form-schema note that
-"submit assembles the record; persisting is on the roadmap"). `sql.py` later
-maps `record` to an `INSERT`/`UPDATE` on `FormSpec.table`.
+`RecordSink.save(form: FormSpec, record: dict) -> None`, where `record` is
+**column-keyed** (built by the engine via each field's `to_columns`).
+`logging.py` echoes it (no DB). `sql.py` INSERTs one row into `FormSpec.table`:
+it discovers column types from `information_schema` (cached per table) and casts
+each `%s` to its column type, which is what lets a `str` reach an enum column.
+Values only ever travel as parameters.
+
+### `db/` — database access
+
+The only package that touches Postgres, and only `connection.py` imports
+psycopg (lazily). `catalog.py` reads a dynamic `select`'s options; `resolve.py`
+produces a per-dialog copy of the form with those options materialized so
+**fields stay I/O-free** — they only ever see static `(label, value)` choices.
+`SqlCatalog` and `SqlSink` take an injected connection, so both are unit-tested
+with a fake (no live DB). The Telegram adapter runs these blocking calls off the
+event loop with `asyncio.to_thread`.
+
+### field → column mapping
+
+`FieldType` exposes `column(spec)` / `columns(spec)` / `to_columns(spec, value)`.
+The default writes one column (`spec.column or spec.key`). Two overrides matter:
+`repeat` → two columns (`period`, `every`); a dynamic `select` stores the chosen
+**value** (an id) into its `column:` (e.g. `task_id`) while showing the label.
+Form-level `context` columns (filled from the message, via `context.py`) are
+merged in by the adapter at submit time.
 
 ### `transcribe/` — voice to text (port, roadmap)
 

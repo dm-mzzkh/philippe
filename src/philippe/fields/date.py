@@ -74,4 +74,6 @@ class Date(FieldType):
         return value.isoformat()
 
     def to_record(self, spec, value: _date):
-        return value.isoformat()
+        # a real date object — psycopg adapts it to a DATE column natively;
+        # LoggingSink serializes it via json default=str
+        return value

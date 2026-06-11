@@ -109,3 +109,19 @@ class FieldType(ABC):
     def to_record(self, spec: FieldSpec, value: Any) -> Any:
         """Value as it should be stored in the DB column."""
         return value
+
+    # --- DB column mapping ------------------------------------------------
+    # Most fields write one column named after the field key (or ``column:``).
+    # A field type that fills several columns (e.g. ``repeat``) overrides
+    # ``columns`` and ``to_columns`` together.
+
+    def column(self, spec: FieldSpec) -> str:
+        return spec.column or spec.key
+
+    def columns(self, spec: FieldSpec) -> list[str]:
+        """The DB columns this field writes (used to emit NULLs when skipped)."""
+        return [self.column(spec)]
+
+    def to_columns(self, spec: FieldSpec, value: Any) -> dict[str, Any]:
+        """Map a (non-None) stored value to ``{column: db_value}``."""
+        return {self.column(spec): self.to_record(spec, value)}

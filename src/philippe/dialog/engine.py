@@ -166,9 +166,11 @@ class Engine:
         for spec in session.form.fields:
             value = session.answers.get(spec.key)
             field_type = get_field_type(spec.type)
-            record[spec.key] = (
-                field_type.to_record(spec, value) if value is not None else None
-            )
+            if value is None:
+                for column in field_type.columns(spec):
+                    record[column] = None
+            else:
+                record.update(field_type.to_columns(spec, value))
             rendered[spec.label] = (
                 field_type.render(spec, value) if value is not None else "—"
             )

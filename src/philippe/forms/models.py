@@ -8,10 +8,10 @@ is a plain container holding already-validated, concrete field specs — see
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FieldSpec(BaseModel):
@@ -25,6 +25,21 @@ class FieldSpec(BaseModel):
     required: bool = True
     default: Any = None
     help: str | None = None
+    # DB column this field writes to (defaults to ``key``). A field type may map
+    # to more than one column (e.g. ``repeat`` → period + every), in which case
+    # it ignores this and names its own columns.
+    column: str | None = None
+
+
+class ContextColumn(BaseModel):
+    """A column filled from the message context (e.g. the Telegram sender),
+    not asked as a field. ``source`` (YAML key ``from``) names a value the
+    adapter can provide: ``user_id``, ``user_name``, or ``chat_id``."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    column: str
+    source: str = Field(alias="from")
 
 
 @dataclass
@@ -35,6 +50,7 @@ class FormSpec:
     title: str
     table: str | None
     fields: list[FieldSpec]
+    context: list[ContextColumn] = field(default_factory=list)
 
     def field_index(self, key: str) -> int:
         """Index of the field with ``key`` (raises ``KeyError`` if absent)."""

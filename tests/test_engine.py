@@ -121,7 +121,7 @@ def test_repeat_needs_both_buttons_then_completes(tmp_path, engine):
     out = engine.step(s, Input(button="2"))         # frequency → both chosen → done
     assert "review" in out.prompt.text.lower()
     rec = engine.step(s, Input(button=SUBMIT))
-    assert rec.record == {"r": {"period": "week", "frequency": 2}}
+    assert rec.record == {"period": "week", "every": 2}   # repeat → two columns
 
 
 def test_repeat_order_independent_and_typed_frequency(tmp_path, engine):
@@ -133,7 +133,7 @@ def test_repeat_order_independent_and_typed_frequency(tmp_path, engine):
     out = engine.step(s, Input(button="month"))     # then period → done
     assert "review" in out.prompt.text.lower()
     rec = engine.step(s, Input(button=SUBMIT))
-    assert rec.record == {"r": {"period": "month", "frequency": 10}}
+    assert rec.record == {"period": "month", "every": 10}
 
 
 def test_repeat_rejects_out_of_bounds_frequency(tmp_path, engine):

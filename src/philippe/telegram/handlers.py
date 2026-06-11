@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Dispatcher, Router
@@ -9,9 +10,12 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 
+from ..context import resolve_context
+from ..db.resolve import resolve_form
 from ..dialog import Cancelled, Completed, Engine, Session, Show
 from ..dialog.engine import BACK
 from ..fields.base import Input
+from ..fields.select import SelectSpec
 from .keyboards import build_keyboard
 from .render import message_to_input
 
@@ -21,13 +25,38 @@ logger = logging.getLogger("philippe.telegram")
 class Runner:
     """Holds the form/engine/store and drives one engine step to a rendered reply."""
 
-    def __init__(self, form, sink, store, transcriber=None) -> None:
+    def __init__(self, form, sink, store, catalog=None, transcriber=None) -> None:
         self.form = form
         self.sink = sink
         self.store = store
+        self.catalog = catalog
         self.transcriber = transcriber
         self.engine = Engine()
         self._buttons: dict[int, list[str]] = {}  # chat_id -> last payloads
+        self._has_dynamic = any(
+            isinstance(s, SelectSpec) and s.is_dynamic for s in form.fields
+        )
+
+    async def new_session(self) -> Session:
+        """Resolve dynamic options (off the event loop) and start a session."""
+        if self._has_dynamic:
+            form = await asyncio.to_thread(resolve_form, self.form, self.catalog)
+        else:
+            form = resolve_form(self.form, self.catalog)  # cheap copy, no DB
+        return Session(form=form)
+
+    def _context(self, message: Message, form) -> dict:
+        """Resolve the form's context columns from the Telegram message."""
+        if not form.context:
+            return {}
+        user = message.from_user
+        username = f"@{user.username}" if user and user.username else None
+        available = {
+            "user_id": user.id if user else None,
+            "user_name": username or (user.full_name if user else None),
+            "chat_id": message.chat.id,
+        }
+        return resolve_context(form.context, available)
 
     async def _send(self, message: Message, outcome: Show) -> None:
         """Reply with a brand-new message (after a text input or /start)."""
@@ -64,10 +93,16 @@ class Runner:
                     await self._send(message, outcome)
                 return
             if isinstance(outcome, Completed):
-                if edit:  # drop the review keyboard before posting the result
+                record = {**outcome.record, **self._context(message, session.form)}
+                try:
+                    await asyncio.to_thread(self.sink.save, session.form, record)
+                except Exception as e:  # keep the review so the user can retry/cancel
+                    logger.exception("save failed for form '%s'", session.form.name)
+                    await message.answer(f"⚠️ Could not save: {e}")
+                    return
+                if edit:  # drop the review keyboard now that it's committed
                     await self._strip_keyboard(message)
                     edit = False
-                self.sink.save(self.form, outcome.record)
                 lines = ["✔ Saved:"] + [
                     f"• {label}: {value}" for label, value in outcome.rendered.items()
                 ]
@@ -99,7 +134,12 @@ def build_dispatcher(runner: Runner) -> Dispatcher:
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
-        session = Session(form=runner.form)
+        try:
+            session = await runner.new_session()
+        except Exception as e:
+            logger.exception("could not start form '%s'", runner.form.name)
+            await message.answer(f"⚠️ Could not start: {e}")
+            return
         await runner.resolve(message, session, runner.engine.start(session))
 
     @router.callback_query()

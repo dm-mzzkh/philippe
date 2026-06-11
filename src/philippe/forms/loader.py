@@ -14,7 +14,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .errors import FormError
-from .models import FieldSpec, FormSpec
+from .models import ContextColumn, FieldSpec, FormSpec
 
 
 class _Envelope(BaseModel):
@@ -25,6 +25,7 @@ class _Envelope(BaseModel):
     name: str
     title: str
     table: str | None = None
+    context: list[ContextColumn] = []
     fields: list[dict[str, Any]]
 
 
@@ -53,6 +54,7 @@ def load_form(path: str | Path) -> FormSpec:
         title=envelope.title,
         table=envelope.table,
         fields=fields,
+        context=list(envelope.context),
     )
 
 

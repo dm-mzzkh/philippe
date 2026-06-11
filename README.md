@@ -58,8 +58,9 @@ dependencies on the first `uv run` — no manual setup. The Telegram adapter is
 an optional extra:
 
 ```bash
-uv sync                    # core deps + dev tools (pytest)
-uv sync --extra telegram   # also install aiogram, needed for `run`
+uv sync                              # core deps + dev tools (pytest)
+uv sync --extra telegram             # also aiogram, needed for `run`
+uv sync --extra telegram --extra db  # also psycopg, to write to Postgres
 ```
 
 Two commands (`uv run python -m philippe …` also works):
@@ -89,6 +90,23 @@ Resolution order (first hit wins): `--token` flag → real environment variable 
 `.env`. Point at a non-default file with `--env-file path/to/.env`, or let uv
 load it: `uv run --env-file .env philippe run --form examples/form.yaml`.
 
+### Writing to a database
+
+The forms [`examples/task.yaml`](examples/task.yaml) and
+[`examples/log.yaml`](examples/log.yaml) write into the Postgres schema in
+[`db/`](db) (a home-cleaning calendar). Start the DB, set `DATABASE_URL`, and the
+bot INSERTs each completed form as a row:
+
+```bash
+cd db && docker compose up -d         # Postgres on :5432, pgweb on :8081
+# .env → DATABASE_URL=postgresql://bot:bot@localhost:5432/bot_dev
+uv run philippe run --form examples/log.yaml
+```
+
+Without `DATABASE_URL` records are only logged. See
+[docs/database.md](docs/database.md) for the field→column mapping (dynamic
+`select` options, `repeat` → `period`+`every`, `context` columns, type casts).
+
 ### Tests
 
 ```bash
@@ -102,16 +120,18 @@ uv run pytest
 ├── README.md                # this file
 ├── docs/
 │   ├── form-schema.md       # full form.yaml field reference
-│   └── architecture.md      # module structure & design rationale
-├── examples/
-│   └── form.yaml            # a worked example exercising every field type
+│   ├── architecture.md      # module structure & design rationale
+│   └── database.md          # how forms map to DB rows; how to run with a DB
+├── examples/                # form.yaml (showcase), task.yaml + log.yaml (DB)
+├── db/                      # Postgres schema + docker-compose (home calendar)
 └── src/philippe/            # the package (see docs/architecture.md)
     ├── forms/               # parse + validate form.yaml
     ├── fields/              # the field-type catalogue (plugin core)
     ├── dialog/              # framework-agnostic conversation engine
     ├── state/               # session storage (port + impls)
+    ├── db/                  # connection, option catalog, per-dialog resolve
     ├── telegram/            # Telegram adapter (aiogram)
-    ├── sink/                # where finished records go (port + impls)
+    ├── sink/                # where finished records go (logging + SQL)
     └── transcribe/          # voice → text (roadmap)
 ```
 
@@ -121,15 +141,16 @@ SQL** — those live in adapters at the edges. See
 
 ## Roadmap
 
-- [ ] **MVP** — run the bot from a single `form.yaml` and collect one record.
+- [x] **MVP** — run the bot from a single `form.yaml` and collect one record.
+- [x] Persist answers to Postgres (INSERT) — see [docs/database.md](docs/database.md).
 - [ ] Generate a `form.yaml` from a table's schema.
 - [ ] Edit existing records, not just insert new ones.
 - [ ] Multiple forms / table picker in one bot.
-- [ ] Persisting answers to the actual database (INSERT/UPDATE).
 - [ ] Voice-to-text for `title` / `text` fields.
 
 ## See also
 
 - [docs/form-schema.md](docs/form-schema.md) — the form definition reference.
 - [docs/architecture.md](docs/architecture.md) — module structure & design.
+- [docs/database.md](docs/database.md) — mapping forms to DB rows; running with Postgres.
 - [examples/form.yaml](examples/form.yaml) — a complete example form.

@@ -2,5 +2,6 @@
 
 from .base import RecordSink
 from .logging import LoggingSink
+from .sql import SqlSink
 
-__all__ = ["LoggingSink", "RecordSink"]
+__all__ = ["LoggingSink", "RecordSink", "SqlSink"]

@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 telegram = ["aiogram>=3"]
+db = ["psycopg[binary]>=3"]
 
 [dependency-groups]
 dev = ["pytest>=7"]

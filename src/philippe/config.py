@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TOKEN_ENV = "PHILIPPE_BOT_TOKEN"
+DATABASE_ENV = "DATABASE_URL"
 
 
 def load_env(path: str | Path | None = None) -> None:
@@ -39,3 +40,8 @@ def resolve_token(explicit: str | None) -> str:
             f"No bot token. Pass --token or set {TOKEN_ENV} in the environment."
         )
     return token
+
+
+def resolve_database_url(explicit: str | None) -> str | None:
+    """The DB DSN if configured (flag or env), else None (→ logging sink)."""
+    return explicit or os.environ.get(DATABASE_ENV)

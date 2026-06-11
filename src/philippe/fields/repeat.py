@@ -12,8 +12,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..forms.models import FieldSpec
 from .base import Ask, Button, Done, FieldType, Input, InputKind, Prompt
 from . import register
+
+
+class RepeatSpec(FieldSpec):
+    # repeat fills two columns; name them here (defaults match the home_cal schema)
+    period_column: str = "period"
+    every_column: str = "every"
+
 
 _PERIODS = [("Every day", "day"), ("Once a week", "week"), ("Once a month", "month")]
 _PERIOD_VALUES = {value for _, value in _PERIODS}
@@ -34,6 +42,7 @@ def _mark(label: str, selected: bool) -> str:
 @register
 class Repeat(FieldType):
     name = "repeat"
+    spec_model = RepeatSpec
 
     def _prompt(self, fstate: dict, hint: str | None = None) -> Prompt:
         period = fstate.get("period")
@@ -79,3 +88,9 @@ class Repeat(FieldType):
 
     def to_record(self, spec, value: Recurrence):
         return {"period": value.period, "frequency": value.frequency}
+
+    def columns(self, spec: RepeatSpec):
+        return [spec.period_column, spec.every_column]
+
+    def to_columns(self, spec: RepeatSpec, value: Recurrence):
+        return {spec.period_column: value.period, spec.every_column: value.frequency}

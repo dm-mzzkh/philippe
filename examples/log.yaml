@@ -1,16 +1,30 @@
 # Form for logging that a task was done. Writes one row into the `logs` table.
-# See docs/form-schema.md for the full field-type reference.
+# See docs/form-schema.md (and docs/database.md) for the full reference.
 name: log
 title: Mark done
 table: logs
+
+# Columns filled from the Telegram message, not asked as fields:
+#   logs.user_id   <- the sender's Telegram id
+#   logs.user_name <- "@" + username (or full name)
+context:
+  - {column: user_id,   from: user_id}
+  - {column: user_name, from: user_name}
+
 fields:
   # Which task -> logs.task_id. Options are loaded from the tasks table
-  # (only active ones); allow_custom is off so you can't log an unknown task.
+  # (active ones only); the button shows the title, the row stores the id.
   - key: task
     type: select
     label: What did you do?
-    options: from tasks where active = true   # populated dynamically by the bot
+    column: task_id
     allow_custom: false
+    options:
+      table: tasks
+      value: id
+      label: title
+      where: active = true
+      order_by: title
 
   # When -> logs.done_at. Relative-day buttons; Today is the default.
   - key: done_at
@@ -24,9 +38,5 @@ fields:
     label: Any comment?
     required: false
 
-# Not asked as fields — the bot fills these from the Telegram message context:
-#   logs.user_id   <- message.from_user.id
-#   logs.user_name <- "@" + message.from_user.username
-#
 # After the last field the bot shows the on_submit review automatically
-# (parameter: value list, with Cancel / Submit & fill again). Not listed here.
+# (Cancel / Submit & fill again). Not listed here.
