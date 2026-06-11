@@ -53,7 +53,7 @@ philippe/
 │       │   ├── boolean.py         #   bool    (yes/no)
 │       │   ├── select.py          #   select  (options, default, allow_custom)
 │       │   ├── date.py            #   date    (relative buttons + parsing)
-│       │   ├── repeat.py          #   repeat  (two-step: period → frequency)
+│       │   ├── repeat.py          #   repeat  (one message: period + frequency rows)
 │       │   └── attachment.py      #   photo / media / audio
 │       │
 │       ├── dialog/                # ── framework-agnostic conversation engine ──
@@ -154,33 +154,40 @@ Key abstractions (all framework-agnostic dataclasses):
 - **`Step`** — the result of `handle`: `Ask(prompt)` (re-prompt, e.g. next
   sub-step or a validation message), or `Done(value)` (field complete).
 
-**Why fields carry their own `fstate`:** some fields are multi-step. `repeat`
-asks period, then frequency; `date` offers buttons but also accepts typed
+**Why fields carry their own `fstate`:** some fields collect more than one
+value before they are done. `repeat` shows period and frequency as two button
+rows in a single message, tracks the chosen value of each in `fstate`, and
+completes once **both** are picked; `date` offers buttons but also accepts typed
 input. The engine gives each field a private `fstate` dict in the session so a
-field can remember "I'm on step 2" without the engine knowing the details.
+field can accumulate its partial state without the engine knowing the details.
 
 ```python
-# fields/repeat.py  (sketch of multi-step handling)
+# fields/repeat.py  (sketch: one message, two rows, complete when both chosen)
 @register
 class Repeat(FieldType):
     name = "repeat"
-    spec_model = RepeatSpec
 
     def start(self, spec, fstate):
-        fstate["step"] = "period"
-        return Prompt("How often?", PERIOD_BUTTONS, expect={InputKind.BUTTON})
+        return self._prompt(fstate)               # period row + ×N row, none marked
 
     def handle(self, spec, fstate, inp):
-        if fstate["step"] == "period":
-            fstate["period"] = parse_period(inp.button)   # day/week/month
-            fstate["step"] = "frequency"
-            return Ask(Prompt("Every how many?", FREQ_BUTTONS,
-                              expect={InputKind.BUTTON, InputKind.TEXT}))
-        freq = parse_frequency(inp)                        # button or typed 1..365
-        if not 1 <= freq <= 365:
-            return Ask(Prompt("Enter a number from 1 to 365.", FREQ_BUTTONS, ...))
-        return Done(Recurrence(fstate["period"], freq))
+        token = (inp.button or inp.text or "").strip()
+        if token in PERIOD_VALUES:                # tapped a period button
+            fstate["period"] = token
+        elif 1 <= _as_int(token) <= 365:          # tapped ×N or typed a number
+            fstate["every"] = _as_int(token)
+        else:
+            return Ask(self._prompt(fstate, hint="Pick a period and ×N, or 1–365."))
+        if "period" in fstate and "every" in fstate:
+            return Done(Recurrence(fstate["period"], fstate["every"]))
+        return Ask(self._prompt(fstate))          # re-render with the "• "-marked pick
 ```
+
+Each tap returns an `Ask` carrying the re-rendered prompt. The **Telegram
+adapter edits the message in place** for button-driven `Ask`s (it calls
+`edit_text`, not `answer`), so picking a period and then a ×N updates the one
+message rather than posting a new one for each tap. See
+[the Telegram adapter](#telegram--the-driving-adapter).
 
 The **registry** in `fields/__init__.py` maps `"repeat" → Repeat()` and powers
 both the loader (which spec model to use) and the engine (which handler to
@@ -200,11 +207,12 @@ final `Commit`) for a `Presenter` to render.
   2. On `Done(value)`, store it under the field `key`, advance the cursor.
   3. On `Back`, pop to the previous field (kept answers preserved).
   4. After the last field, switch to `REVIEW`.
-- **`review.py`** — builds the `parameter: value` list (each value rendered via
-  the field's `render`), turns each into an **edit link** that sets the cursor
-  back to that one field with `return_to_review = True`, and handles the
-  **Cancel** / **Submit & fill again** buttons. On submit it calls the
-  `RecordSink` and resets the session to field 0 for the next entry.
+- **review (in `engine.py`)** — builds one button per field labelled
+  `<field label>: <short answer>` (the value rendered via the field's `render`,
+  then shortened to one line). Each button is an **edit link** that sets the
+  cursor back to that field with `return_to_review = True`; the **Cancel** /
+  **Submit & fill again** row finishes. On submit the engine returns the record
+  for the adapter's `RecordSink`, then restarts the session for the next entry.
 - **`ports.py`** — the `Presenter` protocol: `show(prompt)` / `commit(record)`.
   The engine outputs through this; the Telegram adapter implements it. This is
   the seam that keeps the engine UI-agnostic.
@@ -225,7 +233,10 @@ translator in both directions:
   + inline keyboard (appending the `Back` button supplied by the engine).
 - **`handlers.py`**: `/start` creates a session and runs the engine; every
   message/callback loads the session, feeds the `Input` to the engine, and
-  renders the resulting `Prompt`. It implements the `Presenter` port.
+  renders the resulting `Prompt`. A `Prompt` produced by a **button tap is
+  rendered with `edit_text`** (the existing message updates in place); one
+  produced by a **text message or `/start` is a new `answer`**. This is what
+  keeps `repeat`'s two taps on a single message instead of re-sending it.
 
 Swapping to a different chat platform = a new sibling adapter, core untouched.
 
@@ -315,15 +326,12 @@ What the shipped MVP does, and two small deviations from the plan above:
   `dialog/ports.py` Presenter abstraction wasn't needed yet.
 - **`on_submit` review logic lives in `dialog/engine.py`**, not a separate
   `dialog/review.py` — it is small enough that splitting it added no value.
-- **A console driver (`philippe/console.py`)** sits beside the Telegram adapter:
-  same engine, stdin/stdout. It exists so the dialog can be run and tested with
-  no bot token and without `aiogram` installed — `philippe console --form …`.
 - **Reserved button payloads** (`__back__`, `__skip__`, `__submit__`,
   `__cancel__`, `__edit__:<key>`) are defined in `dialog/engine.py`. The
   Telegram adapter never sends these as callback data directly — it sends the
   button's *index* and keeps an index→value map per chat, sidestepping
   Telegram's 64-byte callback-data limit.
 
-Covered by `tests/` (15 tests): form loading & validation errors, field order,
-Back navigation, Skip, range re-ask, the two-step `repeat`, edit-from-review,
+Covered by `tests/` (18 tests): form loading & validation errors, field order,
+Back navigation, Skip, range re-ask, the one-message `repeat`, edit-from-review,
 cancel, and submit-then-restart.

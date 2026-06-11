@@ -61,17 +61,20 @@
          * day and month — 01.01, 1.1, or 1 1
          * day, month and year — same separators, e.g. 01.01.2026
 
-   * repeat - a recurrence rule, asked in two steps
-      * 1) period — buttons
+   * repeat - a recurrence rule, one message with two button rows
+      * row 1) period
          * Every day
-         * Once a week (def)
+         * Once a week
          * Once a month
-      * 2) frequency — buttons
-         * 1 (def)
-         * 2
-         * 3
-         * 4
+      * row 2) frequency
+         * ×1
+         * ×2
+         * ×3
+         * ×4
          * or type any integer from 1 to 365
+      * tap one button from each row (in any order); the chosen button is marked
+        "• " and the message is edited in place — nothing is re-sent
+      * the field completes once both a period and a frequency are chosen
       * stored value combines period + frequency (e.g. "every 2 weeks")
 
    * photo / media / audio - attachments (user sends the message)
@@ -80,9 +83,10 @@
       * audio - an audio message
 
 * on_submit — the review step (not declared as a field, runs automatically last)
-   * shows everything entered
-      * parameter: value
-         * value is a link — tap it to jump back to that single field, change it, return to review
+   * shows everything entered, one button per field
+      * each button reads `<field label>: <short answer>` and is the edit link —
+        tap it to jump back to that single field, change it, return to review
+      * long answers are shortened to one line on the button
       * buttons
          * Cancel — discard the form
          * Submit & fill again — commit the record, then restart the same form for the next entry

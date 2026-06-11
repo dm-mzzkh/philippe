@@ -127,7 +127,6 @@ class Engine:
 
     def _show_review(self, session: Session) -> Outcome:
         session.mode = "review"
-        lines = ["Please review your answers:", ""]
         buttons = []
         for spec in session.form.fields:
             value = session.answers.get(spec.key)
@@ -136,12 +135,13 @@ class Engine:
                 if value is not None
                 else "—"
             )
-            lines.append(f"• {spec.label}: {shown}")
-            buttons.append([Button(f"✏️ {spec.label}", EDIT_PREFIX + spec.key)])
+            label = f"{spec.label}: {_short(shown)}"
+            buttons.append([Button(label, EDIT_PREFIX + spec.key)])
         buttons.append(
             [Button("✖ Cancel", CANCEL), Button("✔ Submit & fill again", SUBMIT)]
         )
-        return Show(Prompt("\n".join(lines), buttons, {InputKind.BUTTON}))
+        text = "Please review your answers (tap a field to edit):"
+        return Show(Prompt(text, buttons, {InputKind.BUTTON}))
 
     def _step_review(self, session: Session, inp: Input) -> Outcome:
         data = inp.button
@@ -173,3 +173,11 @@ class Engine:
                 field_type.render(spec, value) if value is not None else "—"
             )
         return Completed(record=record, rendered=rendered)
+
+
+def _short(text: object, limit: int = 24) -> str:
+    """A one-line, length-bounded value for a review button label."""
+    collapsed = " ".join(str(text).split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1] + "…"

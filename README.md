@@ -62,22 +62,17 @@ uv sync                    # core deps + dev tools (pytest)
 uv sync --extra telegram   # also install aiogram, needed for `run`
 ```
 
-Three commands (`uv run python -m philippe …` also works):
+Two commands (`uv run python -m philippe …` also works):
 
 ```bash
 # Check a form loads and see its fields — no token needed:
 uv run philippe validate --form examples/form.yaml
-
-# Walk the whole dialog in your terminal — no token, no aiogram:
-uv run philippe console  --form examples/form.yaml
 
 # Run the real Telegram bot (needs the token, see below):
 uv run philippe run      --form examples/form.yaml
 ```
 
 The bot registers `/start`, which begins the form dialog from the first field.
-`philippe console` is the fastest way to see the MVP work: it drives the exact
-same engine over stdin/stdout, rendering buttons as numbered choices.
 
 ### Providing the bot token (`.env`)
 

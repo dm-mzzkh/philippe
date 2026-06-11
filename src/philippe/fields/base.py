@@ -59,7 +59,7 @@ class Prompt:
 
 @dataclass
 class Input:
-    """A normalized user action produced by a driving adapter (console/telegram)."""
+    """A normalized user action produced by a driving adapter (e.g. telegram)."""
 
     text: str | None = None
     button: str | None = None

@@ -1,7 +1,6 @@
 """Command-line entry point.
 
     philippe validate --form FORM       # load + check a form.yaml, print a summary
-    philippe console  --form FORM       # run the dialog in the terminal (no token)
     philippe run      --form FORM       # run the Telegram bot (needs aiogram + token)
 """
 
@@ -25,9 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_validate = sub.add_parser("validate", help="load and validate a form.yaml")
     _add_form_arg(p_validate)
-
-    p_console = sub.add_parser("console", help="run the dialog in the terminal")
-    _add_form_arg(p_console)
 
     p_run = sub.add_parser("run", help="run the Telegram bot")
     _add_form_arg(p_run)
@@ -56,12 +52,6 @@ def cmd_validate(args) -> None:
         print(f"    - {spec.key}: {spec.type}{req} — {spec.label}")
 
 
-def cmd_console(args) -> None:
-    from .console import run_console
-
-    run_console(_load(args.form))
-
-
 def cmd_run(args) -> None:
     from .config import load_env, resolve_token
 
@@ -80,7 +70,7 @@ def cmd_run(args) -> None:
     run_bot(form, resolve_token(args.token))
 
 
-_COMMANDS = {"validate": cmd_validate, "console": cmd_console, "run": cmd_run}
+_COMMANDS = {"validate": cmd_validate, "run": cmd_run}
 
 
 def main(argv: list[str] | None = None) -> None:

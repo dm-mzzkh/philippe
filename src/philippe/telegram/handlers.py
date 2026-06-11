@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Dispatcher, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 
@@ -28,19 +29,44 @@ class Runner:
         self.engine = Engine()
         self._buttons: dict[int, list[str]] = {}  # chat_id -> last payloads
 
-    async def _show(self, message: Message, outcome: Show) -> None:
+    async def _send(self, message: Message, outcome: Show) -> None:
+        """Reply with a brand-new message (after a text input or /start)."""
         markup, payloads = build_keyboard(outcome.prompt)
         self._buttons[message.chat.id] = payloads
         await message.answer(outcome.prompt.text, reply_markup=markup)
 
-    async def resolve(self, message: Message, session: Session, outcome) -> None:
+    async def _edit(self, message: Message, outcome: Show) -> None:
+        """Update the existing message in place (after a button tap), so taps
+        like picking a period then a ×N don't re-send the message."""
+        markup, payloads = build_keyboard(outcome.prompt)
+        self._buttons[message.chat.id] = payloads
+        try:
+            await message.edit_text(outcome.prompt.text, reply_markup=markup)
+        except TelegramBadRequest:
+            pass  # identical content (e.g. re-tapping the already-selected button)
+
+    async def _strip_keyboard(self, message: Message) -> None:
+        try:
+            await message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+
+    async def resolve(
+        self, message: Message, session: Session, outcome, *, edit: bool = False
+    ) -> None:
         chat_id = message.chat.id
         while True:
             if isinstance(outcome, Show):
                 self.store.put(chat_id, session)
-                await self._show(message, outcome)
+                if edit:
+                    await self._edit(message, outcome)
+                else:
+                    await self._send(message, outcome)
                 return
             if isinstance(outcome, Completed):
+                if edit:  # drop the review keyboard before posting the result
+                    await self._strip_keyboard(message)
+                    edit = False
                 self.sink.save(self.form, outcome.record)
                 lines = ["✔ Saved:"] + [
                     f"• {label}: {value}" for label, value in outcome.rendered.items()
@@ -49,13 +75,17 @@ class Runner:
                 outcome = self.engine.restart(session)
                 continue
             if isinstance(outcome, Cancelled):
+                if edit:
+                    await self._strip_keyboard(message)
                 self.store.drop(chat_id)
                 self._buttons.pop(chat_id, None)
                 await message.answer("Cancelled. Send /start to begin again.")
                 return
 
-    async def drive(self, message: Message, session: Session, inp: Input) -> None:
-        await self.resolve(message, session, self.engine.step(session, inp))
+    async def drive(
+        self, message: Message, session: Session, inp: Input, *, edit: bool = False
+    ) -> None:
+        await self.resolve(message, session, self.engine.step(session, inp), edit=edit)
 
     def button_value(self, chat_id: int, data: str) -> str | None:
         try:
@@ -84,7 +114,7 @@ def build_dispatcher(runner: Runner) -> Dispatcher:
         if value is None:
             return
         inp = Input(back=True) if value == BACK else Input(button=value)
-        await runner.drive(message, session, inp)
+        await runner.drive(message, session, inp, edit=True)  # update in place
 
     @router.message()
     async def on_message(message: Message) -> None:

@@ -1,7 +1,11 @@
-"""``repeat`` — a recurrence rule asked in two steps: period, then frequency.
+"""``repeat`` — a recurrence rule shown as a single message with two button rows:
+the period (``Every day`` / ``Once a week`` / ``Once a month``) and the
+multiplier (``×1``…``×4``).
 
-This is the canonical multi-step field: it remembers which sub-step it is on in
-``fstate`` so the engine doesn't need to know about its internal flow.
+The user taps one button from each row; the chosen button is marked ``• `` and
+the field completes once **both** a period and a frequency have been picked. The
+frequency can also be typed (1–365). The Telegram adapter edits the message in
+place on each tap, so nothing is re-sent — the same message just updates.
 """
 
 from __future__ import annotations
@@ -11,12 +15,9 @@ from dataclasses import dataclass
 from .base import Ask, Button, Done, FieldType, Input, InputKind, Prompt
 from . import register
 
-_PERIODS = [
-    ("Every day", "day"),
-    ("Once a week (default)", "week"),
-    ("Once a month", "month"),
-]
-_PERIOD_VALUES = {v for _, v in _PERIODS}
+_PERIODS = [("Every day", "day"), ("Once a week", "week"), ("Once a month", "month")]
+_PERIOD_VALUES = {value for _, value in _PERIODS}
+_FREQ_BUTTONS = [1, 2, 3, 4]
 _UNIT = {"day": "day", "week": "week", "month": "month"}
 
 
@@ -26,43 +27,49 @@ class Recurrence:
     frequency: int
 
 
-def _period_keyboard():
-    return [[Button(label, value)] for label, value in _PERIODS]
-
-
-def _freq_keyboard():
-    return [[Button("1 (default)", "1"), Button("2", "2"),
-             Button("3", "3"), Button("4", "4")]]
+def _mark(label: str, selected: bool) -> str:
+    return f"• {label}" if selected else label
 
 
 @register
 class Repeat(FieldType):
     name = "repeat"
 
+    def _prompt(self, fstate: dict, hint: str | None = None) -> Prompt:
+        period = fstate.get("period")
+        every = fstate.get("every")
+        period_row = [
+            Button(_mark(label, value == period), value) for label, value in _PERIODS
+        ]
+        freq_row = [
+            Button(_mark(f"×{n}", n == every), str(n)) for n in _FREQ_BUTTONS
+        ]
+        text = hint or "How often does it repeat? Pick a period and ×N:"
+        return Prompt(text, [period_row, freq_row], {InputKind.BUTTON, InputKind.TEXT})
+
     def start(self, spec, fstate):
-        fstate["step"] = "period"
-        return Prompt("How often? Pick a period:", _period_keyboard(),
-                      {InputKind.BUTTON})
+        return self._prompt(fstate)
 
     def handle(self, spec, fstate, inp):
-        if fstate.get("step") != "frequency":
-            if inp.button in _PERIOD_VALUES:
-                fstate["period"] = inp.button
-                fstate["step"] = "frequency"
-                return Ask(Prompt("Every how many?", _freq_keyboard(),
-                                  {InputKind.BUTTON, InputKind.TEXT}))
-            return Ask(Prompt("Pick a period.", _period_keyboard(),
-                              {InputKind.BUTTON}))
+        token = (inp.button if inp.button is not None else inp.text or "").strip()
 
-        raw = inp.button if inp.button is not None else inp.text
-        try:
-            freq = int((raw or "").strip())
-        except (TypeError, ValueError):
-            freq = 0
-        if not 1 <= freq <= 365:
-            return Ask(Prompt("Enter a whole number from 1 to 365.",
-                              _freq_keyboard(), {InputKind.BUTTON, InputKind.TEXT}))
-        return Done(Recurrence(fstate["period"], freq))
+        if token in _PERIOD_VALUES:
+            fstate["period"] = token
+        else:
+            try:
+                every = int(token)
+            except ValueError:
+                every = 0
+            if 1 <= every <= 365:
+                fstate["every"] = every
+            else:
+                return Ask(self._prompt(
+                    fstate, "Pick a period and ×N, or type a number from 1 to 365."
+                ))
+
+        if "period" in fstate and "every" in fstate:
+            return Done(Recurrence(fstate["period"], fstate["every"]))
+        return Ask(self._prompt(fstate))  # one dimension still missing — keep waiting
 
     def render(self, spec, value: Recurrence):
         unit = _UNIT[value.period]

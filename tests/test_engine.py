@@ -97,25 +97,71 @@ def test_number_out_of_range_reasks(tmp_path, engine):
     assert s.answers["n"] == 3
 
 
-def test_repeat_is_two_steps(tmp_path, engine):
+def test_repeat_layout_two_rows_nothing_preselected(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: r, type: repeat, label: R}")
+    s = Session(form=form)
+    out = engine.start(s)
+    # period row, frequency row, then the engine's Back row
+    assert len(out.prompt.buttons) == 3
+    assert [b.value for b in out.prompt.buttons[0]] == ["day", "week", "month"]
+    assert [b.value for b in out.prompt.buttons[1]] == ["1", "2", "3", "4"]
+    assert out.prompt.buttons[1][0].label == "×1"   # ×N labels
+    # nothing chosen yet → no "• " marks anywhere
+    assert all(not b.label.startswith("• ")
+               for row in out.prompt.buttons for b in row)
+
+
+def test_repeat_needs_both_buttons_then_completes(tmp_path, engine):
     form = make_form(tmp_path, "- {key: r, type: repeat, label: R}")
     s = Session(form=form)
     engine.start(s)
-    out = engine.step(s, Input(button="week"))     # period chosen
-    assert "how many" in out.prompt.text.lower()
-    out = engine.step(s, Input(text="2"))          # frequency
-    assert isinstance(out, Show) and "review" in out.prompt.text.lower()
+    out = engine.step(s, Input(button="week"))      # period only → keep waiting
+    assert "review" not in out.prompt.text.lower()
+    assert "• Once a week" in [b.label for b in out.prompt.buttons[0]]  # marked
+    out = engine.step(s, Input(button="2"))         # frequency → both chosen → done
+    assert "review" in out.prompt.text.lower()
     rec = engine.step(s, Input(button=SUBMIT))
     assert rec.record == {"r": {"period": "week", "frequency": 2}}
+
+
+def test_repeat_order_independent_and_typed_frequency(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: r, type: repeat, label: R}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(text="10"))          # typed frequency first
+    assert "review" not in out.prompt.text.lower()
+    out = engine.step(s, Input(button="month"))     # then period → done
+    assert "review" in out.prompt.text.lower()
+    rec = engine.step(s, Input(button=SUBMIT))
+    assert rec.record == {"r": {"period": "month", "frequency": 10}}
 
 
 def test_repeat_rejects_out_of_bounds_frequency(tmp_path, engine):
     form = make_form(tmp_path, "- {key: r, type: repeat, label: R}")
     s = Session(form=form)
     engine.start(s)
-    engine.step(s, Input(button="day"))
-    out = engine.step(s, Input(text="999"))
+    out = engine.step(s, Input(text="999"))         # invalid → re-ask, not done
     assert "1 to 365" in out.prompt.text
+    assert "review" not in out.prompt.text.lower()
+
+
+def test_review_buttons_show_field_and_short_answer(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: name, type: title, label: Name}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(text="Alice"))      # review
+    edit = out.prompt.buttons[0][0]
+    assert edit.label == "Name: Alice"
+    assert edit.value == EDIT_PREFIX + "name"
+
+
+def test_review_button_truncates_long_answer(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: d, type: text, label: D}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(text="x" * 100))    # review
+    label = out.prompt.buttons[0][0].label
+    assert label.startswith("D: ") and label.endswith("…") and len(label) < 40
 
 
 def test_edit_from_review_returns_to_review(tmp_path, engine):
