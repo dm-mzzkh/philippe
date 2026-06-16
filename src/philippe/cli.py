@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--token", help="bot token (else $PHILIPPE_BOT_TOKEN / .env)")
     p_run.add_argument("--database-url", help="Postgres DSN (else $DATABASE_URL / .env); "
                                               "without it records are only logged")
+    p_run.add_argument("--allowed-ids", help="comma-separated Telegram ids allowed to use "
+                                             "the bot (else $PHILIPPE_ALLOWED_IDS; open if unset)")
     p_run.add_argument("--env-file", type=Path, help="path to a .env file to load")
     p_run.add_argument("--log-level", default="INFO")
 
@@ -51,8 +53,16 @@ def _load_forms(paths, forms_dir: Path | None) -> dict:
     """Load all requested forms into a {name: FormSpec} dict (name-keyed so the
     /forms menu and form-selection can address them)."""
     files = [Path(p) for p in (paths or [])]
-    if forms_dir:
-        files += sorted(forms_dir.glob("*.yaml"))
+    if forms_dir is not None:
+        if not forms_dir.is_dir():
+            print(f"error: --forms-dir not found or not a directory: {forms_dir}",
+                  file=sys.stderr)
+            raise SystemExit(2)
+        found = sorted(forms_dir.glob("*.yaml"))
+        if not found:
+            print(f"error: no *.yaml forms in {forms_dir}", file=sys.stderr)
+            raise SystemExit(2)
+        files += found
     if not files:
         print("error: no forms — pass --form PATH (repeatable) or --forms-dir DIR",
               file=sys.stderr)
@@ -66,12 +76,35 @@ def _load_forms(paths, forms_dir: Path | None) -> dict:
                   file=sys.stderr)
             raise SystemExit(2)
         forms[form.name] = form
+    _validate_actions(forms)
     return forms
+
+
+def _validate_actions(forms: dict) -> None:
+    """A query view's `action` must point at a loaded form and prefill real fields."""
+    for form in forms.values():
+        if form.action is None:
+            continue
+        target = forms.get(form.action.form)
+        if target is None:
+            print(f"error: form '{form.name}': action.form '{form.action.form}' "
+                  f"is not one of the loaded forms", file=sys.stderr)
+            raise SystemExit(2)
+        keys = {f.key for f in target.fields}
+        for field_key in form.action.prefill:
+            if field_key not in keys:
+                print(f"error: form '{form.name}': action prefills '{field_key}', "
+                      f"which is not a field of '{target.name}'", file=sys.stderr)
+                raise SystemExit(2)
 
 
 def cmd_validate(args) -> None:
     form = _load(args.form)
     print(f"OK: form '{form.name}' — {form.title}")
+    if form.kind == "query":
+        print("  kind: query (read-only view)")
+        print(f"  query: {form.query.strip().splitlines()[0]} …")
+        return
     print(f"  table: {form.table or '(none)'}")
     print(f"  fields ({len(form.fields)}):")
     for spec in form.fields:
@@ -80,7 +113,12 @@ def cmd_validate(args) -> None:
 
 
 def cmd_run(args) -> None:
-    from .config import load_env, resolve_database_url, resolve_token
+    from .config import (
+        load_env,
+        resolve_allowed_ids,
+        resolve_database_url,
+        resolve_token,
+    )
 
     if args.env_file:
         load_env(args.env_file)
@@ -95,7 +133,8 @@ def cmd_run(args) -> None:
         raise SystemExit(1)
 
     sink, catalog = _build_db(forms.values(), resolve_database_url(args.database_url))
-    run_bot(forms, resolve_token(args.token), sink=sink, catalog=catalog)
+    run_bot(forms, resolve_token(args.token), sink=sink, catalog=catalog,
+            allowed_ids=resolve_allowed_ids(args.allowed_ids))
 
 
 def _build_db(forms, dsn: str | None):

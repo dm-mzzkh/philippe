@@ -1,5 +1,3 @@
-# Form for logging that a task was done. Writes one row into the `logs` table.
-# See docs/form-schema.md (and docs/database.md) for the full reference.
 name: log
 title: Mark done
 table: logs
@@ -38,5 +36,12 @@ fields:
     label: Any comment?
     required: false
 
+  - key: who
+    type: select
+    label: who did it?
+    column: user_name
+    allow_custom: true
+    options:
+      query: SELECT DISTINCT user_name AS value, user_name AS label FROM logs WHERE user_name IS NOT NULL ORDER BY 1
 # After the last field the bot shows the on_submit review automatically
 # (Cancel / Submit & fill again). Not listed here.

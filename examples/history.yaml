@@ -1,0 +1,17 @@
+# A read-only VIEW (kind: query): the recent completion log, newest first.
+# Each row: date · task · who · comment (if any). Needs a database.
+# (Tap-to-edit/delete would need row UPDATE/DELETE, which isn't built yet.)
+name: history
+title: История
+kind: query
+query: |
+  SELECT
+    to_char(l.done_at, 'DD.MM') || ' · ' || t.title
+      || CASE WHEN l.user_name IS NOT NULL THEN ' · ' || l.user_name ELSE '' END
+      || CASE WHEN l.comment IS NOT NULL AND l.comment <> ''
+              THEN ' — ' || l.comment ELSE '' END
+      AS label
+  FROM logs l
+  JOIN tasks t ON t.id = l.task_id
+  ORDER BY l.done_at DESC, l.id DESC
+  LIMIT 20;

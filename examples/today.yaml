@@ -1,0 +1,44 @@
+# An ACTIONABLE VIEW (kind: query + action). Picked from /forms, it lists each
+# due task as a button; tapping one launches the `log` form with that task
+# prefilled, so you just confirm the date / add a comment / submit.
+#
+# "Today's to-do": active tasks never done, or whose next due date
+# (last done + every×period) is today or earlier. 🆕 = never done, 🔴 = overdue.
+# The query returns:
+#   label  — the button text
+#   value  — the task id, fed into the action's prefill
+name: today
+title: Сегодня нужно сделать
+kind: query
+
+action:
+  form: log            # tapping a row starts this form…
+  prefill:
+    task: value        # …with field `task` set to the row's `value` (task id)
+
+query: |
+  SELECT
+    t.id AS value,
+    CASE WHEN l.last_done IS NULL THEN '🆕 ' ELSE '' END
+      || t.title
+      || CASE WHEN d.overdue > 0 THEN ' — 🔴 ' || d.overdue || ' дн.' ELSE '' END
+      AS label
+  FROM tasks t
+  LEFT JOIN LATERAL (
+    SELECT max(done_at) AS last_done FROM logs WHERE task_id = t.id
+  ) l ON TRUE
+  CROSS JOIN LATERAL (
+    SELECT CASE
+      WHEN l.last_done IS NULL THEN NULL
+      ELSE CURRENT_DATE - (
+        l.last_done + CASE t.period
+          WHEN 'day'   THEN make_interval(days   => t.every)
+          WHEN 'week'  THEN make_interval(weeks  => t.every)
+          WHEN 'month' THEN make_interval(months => t.every)
+        END
+      )::date
+    END AS overdue
+  ) d
+  WHERE t.active
+    AND (l.last_done IS NULL OR d.overdue >= 0)
+  ORDER BY (l.last_done IS NULL) DESC, d.overdue DESC NULLS FIRST, t.title;

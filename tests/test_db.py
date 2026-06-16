@@ -19,10 +19,16 @@ from philippe.forms.models import ContextColumn, FieldSpec, FormSpec
 
 # --- fake DB-API connection ------------------------------------------------
 
+class _Col:
+    def __init__(self, name):
+        self.name = name
+
+
 class FakeCursor:
     def __init__(self, rows):
         self._rows = rows
         self.executed = []  # list of (sql, params)
+        self.description = None  # set by query() tests
 
     def __enter__(self):
         return self
@@ -149,6 +155,51 @@ def test_sql_sink_rolls_back_on_error():
 
 # --- catalog ---------------------------------------------------------------
 
+def test_select_options_from_raw_query_single_column():
+    conn = FakeConn(rows=[("alice",), ("bob",)])
+    conn.cursor_obj.description = [_Col("user_name")]
+    src = OptionSource(query="SELECT DISTINCT user_name FROM logs ORDER BY 1")
+    assert SqlCatalog(conn).options(src) == [("alice", "alice"), ("bob", "bob")]
+
+
+def test_select_options_from_raw_query_label_value():
+    conn = FakeConn(rows=[("Alice", 1), ("Bob", 2)])
+    conn.cursor_obj.description = [_Col("label"), _Col("value")]
+    src = OptionSource(query="SELECT name AS label, id AS value FROM users")
+    assert SqlCatalog(conn).options(src) == [("Alice", 1), ("Bob", 2)]
+
+
+def test_option_source_query_conflicts_with_table(tmp_path):
+    with pytest.raises(FormError, match="cannot be combined"):
+        load_form(_write(tmp_path, """
+            name: t
+            title: T
+            fields:
+              - key: who
+                type: select
+                label: Who?
+                options:
+                  query: SELECT user_name FROM logs
+                  table: logs
+        """))
+
+
+def test_select_with_query_options_is_dynamic(tmp_path):
+    form = load_form(_write(tmp_path, """
+        name: t
+        title: T
+        fields:
+          - key: who
+            type: select
+            label: Who?
+            allow_custom: true
+            options:
+              query: SELECT DISTINCT user_name FROM logs ORDER BY 1
+    """))
+    assert form.fields[0].is_dynamic is True
+    assert form_needs_db(form) is True
+
+
 def test_sql_catalog_queries_and_returns_label_value_pairs():
     conn = FakeConn(rows=[("dishes", 1), ("floor", 2)])
     source = OptionSource(table="tasks", value="id", label="title",
@@ -186,6 +237,73 @@ def test_resolve_form_without_catalog_raises(tmp_path):
     form = load_form(_write(tmp_path, _LOG_FORM))
     with pytest.raises(FormError, match="no database is configured"):
         resolve_form(form, None)
+
+
+def test_query_form_loads_as_read_view(tmp_path):
+    form = load_form(_write(tmp_path, """
+        name: today
+        title: Today
+        kind: query
+        query: SELECT title AS label FROM tasks
+    """))
+    assert form.kind == "query"
+    assert form.fields == []
+    assert "SELECT" in form.query
+    assert form_needs_db(form) is True
+
+
+def test_query_form_requires_a_query(tmp_path):
+    with pytest.raises(FormError, match="needs a non-empty 'query'"):
+        load_form(_write(tmp_path, "name: t\ntitle: T\nkind: query\n"))
+
+
+def test_query_form_with_action_loads(tmp_path):
+    form = load_form(_write(tmp_path, """
+        name: today
+        title: Today
+        kind: query
+        action: {form: log, prefill: {task: value}}
+        query: SELECT id AS value, title AS label FROM tasks
+    """))
+    assert form.action.form == "log"
+    assert form.action.prefill == {"task": "value"}
+
+
+def test_action_rejected_on_data_entry_form(tmp_path):
+    with pytest.raises(FormError, match="only for kind: query"):
+        load_form(_write(tmp_path, """
+            name: t
+            title: T
+            action: {form: x}
+            fields:
+              - {key: a, type: title, label: A}
+        """))
+
+
+def test_resolve_allowed_ids():
+    from philippe.config import resolve_allowed_ids
+    assert resolve_allowed_ids("111, 222") == {111, 222}
+    assert resolve_allowed_ids("") is None
+    with pytest.raises(SystemExit):
+        resolve_allowed_ids("111,abc")
+
+
+def test_unknown_kind_is_rejected(tmp_path):
+    with pytest.raises(FormError, match="unknown kind"):
+        load_form(_write(tmp_path, """
+            name: t
+            title: T
+            kind: wat
+            fields:
+              - {key: a, type: title, label: A}
+        """))
+
+
+def test_catalog_query_returns_row_dicts():
+    conn = FakeConn(rows=[("dishes — просрочено на 2 дн.",), ("floor",)])
+    conn.cursor_obj.description = [_Col("label")]
+    rows = SqlCatalog(conn).query("SELECT label FROM tasks")
+    assert rows == [{"label": "dishes — просрочено на 2 дн."}, {"label": "floor"}]
 
 
 def test_form_needs_db_detects_dynamic_and_context(tmp_path):

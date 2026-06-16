@@ -20,15 +20,40 @@ from . import register
 
 
 class OptionSource(BaseModel):
-    """A DB query that supplies a select's options at dialog start."""
+    """Where a select's options come from at dialog start.
+
+    Two forms (mutually exclusive):
+
+    * structured — ``{table, value, label, where?, order_by?}``: the common case,
+      builds ``SELECT label, value FROM table [WHERE …] [ORDER BY …]``.
+    * raw ``query`` — any SQL you like; it must return columns named ``label`` and
+      ``value`` (or a single column, used for both). Use this for ``DISTINCT``,
+      joins, aggregates, etc.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    table: str
-    value: str
-    label: str
+    table: str | None = None
+    value: str | None = None
+    label: str | None = None
     where: str | None = None
     order_by: str | None = None
+    query: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "OptionSource":
+        structured = ("table", "value", "label", "where", "order_by")
+        if self.query:
+            used = [k for k in structured if getattr(self, k)]
+            if used:
+                raise ValueError(f"'query' cannot be combined with {used}")
+        else:
+            missing = [k for k in ("table", "value", "label") if not getattr(self, k)]
+            if missing:
+                raise ValueError(
+                    f"option source needs {missing} (or a raw 'query' instead)"
+                )
+        return self
 
 
 class SelectSpec(FieldSpec):

@@ -14,7 +14,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .errors import FormError
-from .models import ContextColumn, FieldSpec, FormSpec
+from .models import ContextColumn, FieldSpec, FormSpec, QueryAction
 
 
 class _Envelope(BaseModel):
@@ -25,8 +25,11 @@ class _Envelope(BaseModel):
     name: str
     title: str
     table: str | None = None
+    kind: str = "form"
+    query: str | None = None
+    action: QueryAction | None = None
     context: list[ContextColumn] = []
-    fields: list[dict[str, Any]]
+    fields: list[dict[str, Any]] = []
 
 
 def load_form(path: str | Path) -> FormSpec:
@@ -48,13 +51,26 @@ def load_form(path: str | Path) -> FormSpec:
     except ValidationError as e:
         raise FormError(f"{path}: {_first_error(e)}") from e
 
-    fields = _load_fields(path, envelope.fields)
+    if envelope.kind == "query":
+        if not (envelope.query and envelope.query.strip()):
+            raise FormError(f"{path}: a 'query' form needs a non-empty 'query'")
+        fields: list[FieldSpec] = []
+    elif envelope.kind == "form":
+        if envelope.action is not None:
+            raise FormError(f"{path}: 'action' is only for kind: query forms")
+        fields = _load_fields(path, envelope.fields)
+    else:
+        raise FormError(f"{path}: unknown kind '{envelope.kind}' (form | query)")
+
     return FormSpec(
         name=envelope.name,
         title=envelope.title,
         table=envelope.table,
         fields=fields,
         context=list(envelope.context),
+        kind=envelope.kind,
+        query=envelope.query,
+        action=envelope.action,
     )
 
 
@@ -93,6 +109,13 @@ def _load_fields(path: Path, raw_fields: list[dict[str, Any]]) -> list[FieldSpec
 
 
 def _first_error(e: ValidationError) -> str:
-    err = e.errors()[0]
-    loc = ".".join(str(p) for p in err["loc"]) or "(root)"
-    return f"{loc}: {err['msg']}"
+    errors = e.errors()
+    # In a union (e.g. options: list | OptionSource) one branch reports a generic
+    # "wrong shape" error; prefer a validator (value_error) message — it's the
+    # actionable one.
+    err = next((x for x in errors if x["type"] == "value_error"), errors[0])
+    # Drop union-branch / function-wrapper noise from the location path.
+    parts = [str(p) for p in err["loc"] if "[" not in str(p)]
+    loc = ".".join(parts) or "(root)"
+    msg = err["msg"].removeprefix("Value error, ")
+    return f"{loc}: {msg}"

@@ -52,12 +52,24 @@ Outcome = Show | Completed | Cancelled
 
 
 class Engine:
-    def start(self, session: Session) -> Outcome:
+    def start(self, session: Session, prefill: dict | None = None) -> Outcome:
+        """Begin the form. ``prefill`` (field key → value) pre-sets answers and
+        skips those fields — used when an action launches a form with values from
+        the row that was tapped."""
         session.answers.clear()
         session.fstate.clear()
-        session.cursor = 0
         session.mode = "filling"
         session.return_to_review = False
+        if prefill:
+            for key, value in prefill.items():
+                session.answers[key] = value
+        fields = session.form.fields
+        session.cursor = 0
+        while (session.cursor < len(fields)
+               and fields[session.cursor].key in session.answers):
+            session.cursor += 1  # skip pre-filled fields
+        if session.cursor >= len(fields):
+            return self._show_review(session)
         return self._ask_current(session)
 
     def restart(self, session: Session) -> Outcome:
@@ -103,7 +115,7 @@ class Engine:
             session.return_to_review = False
             return self._show_review(session)
         if session.cursor == 0:
-            return self._ask_current(session)  # nowhere to go back to: re-ask
+            return Cancelled()  # Back on the first field exits the form
         session.cursor -= 1
         return self._ask_current(session)
 

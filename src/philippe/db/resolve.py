@@ -18,9 +18,9 @@ from .catalog import Catalog
 
 
 def form_needs_db(form: FormSpec) -> bool:
-    """True if the form can only work with a database (dynamic options or
-    context columns)."""
-    if form.context:
+    """True if the form can only work with a database (a query view, dynamic
+    options, or context columns)."""
+    if form.kind == "query" or form.context:
         return True
     return any(
         isinstance(spec, SelectSpec) and spec.is_dynamic for spec in form.fields

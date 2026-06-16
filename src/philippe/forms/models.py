@@ -31,6 +31,16 @@ class FieldSpec(BaseModel):
     column: str | None = None
 
 
+class QueryAction(BaseModel):
+    """What a `kind: query` row does when tapped: launch ``form``, pre-filling
+    its fields from this row's columns (``{target_field_key: row_column}``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    form: str
+    prefill: dict[str, str] = {}
+
+
 class ContextColumn(BaseModel):
     """A column filled from the message context (e.g. the Telegram sender),
     not asked as a field. ``source`` (YAML key ``from``) names a value the
@@ -44,13 +54,18 @@ class ContextColumn(BaseModel):
 
 @dataclass
 class FormSpec:
-    """A whole form: metadata plus an ordered list of concrete field specs."""
+    """A whole form. A normal form (``kind: form``) collects ``fields`` and
+    writes a row; a read view (``kind: query``) runs ``query`` and lists the
+    rows as buttons (no dialog, no write)."""
 
     name: str
     title: str
     table: str | None
     fields: list[FieldSpec]
     context: list[ContextColumn] = field(default_factory=list)
+    kind: str = "form"  # "form" | "query"
+    query: str | None = None
+    action: QueryAction | None = None  # query rows: tap → launch a form (prefilled)
 
     def field_index(self, key: str) -> int:
         """Index of the field with ``key`` (raises ``KeyError`` if absent)."""

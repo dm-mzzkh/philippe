@@ -1,24 +1,16 @@
-# Form for adding a cleaning task. Writes one row into the `tasks` table.
-# See docs/form-schema.md for the full field-type reference.
 name: task
 title: New task
 table: tasks
 fields:
-  # Short text -> tasks.title. Typed or sent as a voice message.
   - key: title
     type: title
     label: What's the task?
 
-  # Two-step recurrence (period, then frequency 1-365).
-  # Fills BOTH tasks.period and tasks.every from a single field.
   - key: schedule
     type: repeat
     label: How often?
 
-  # Yes / No -> tasks.active. New tasks are active by default.
   - key: active
     type: bool
     label: Active right away?
     default: true
-# After the last field the bot shows the on_submit review automatically
-# (parameter: value list, with Cancel / Submit & fill again). Not listed here.

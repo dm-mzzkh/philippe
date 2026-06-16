@@ -66,6 +66,28 @@ def test_back_returns_to_previous_field(tmp_path, engine):
     assert s.cursor == 0
 
 
+def test_back_on_first_field_cancels(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: a, type: title, label: A}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(back=True))   # nowhere back → exit the form
+    assert isinstance(out, Cancelled)
+
+
+def test_back_while_editing_first_field_returns_to_review(tmp_path, engine):
+    form = make_form(tmp_path, """
+        - {key: a, type: title, label: A}
+        - {key: b, type: title, label: B}
+    """)
+    s = Session(form=form)
+    engine.start(s)
+    engine.step(s, Input(text="x"))                 # → b
+    engine.step(s, Input(text="y"))                 # → review
+    engine.step(s, Input(button=EDIT_PREFIX + "a"))  # edit field a (cursor 0)
+    out = engine.step(s, Input(back=True))          # back → review, NOT cancel
+    assert isinstance(out, Show) and "review" in out.prompt.text.lower()
+
+
 def test_back_is_always_present(tmp_path, engine):
     form = make_form(tmp_path, "- {key: a, type: title, label: A}")
     s = Session(form=form)
@@ -183,6 +205,27 @@ def test_edit_from_review_returns_to_review(tmp_path, engine):
 
     done = engine.step(s, Input(button=SUBMIT))
     assert done.record == {"a": "x2", "b": "y"}
+
+
+def test_prefill_skips_filled_fields(tmp_path, engine):
+    form = make_form(tmp_path, """
+        - {key: a, type: title, label: A}
+        - {key: b, type: title, label: B}
+    """)
+    s = Session(form=form)
+    out = engine.start(s, prefill={"a": "preset"})
+    assert out.prompt.text == "B"            # 'a' is pre-filled → asks 'b'
+    assert s.answers["a"] == "preset"
+    engine.step(s, Input(text="typed"))      # b → review
+    done = engine.step(s, Input(button=SUBMIT))
+    assert done.record == {"a": "preset", "b": "typed"}
+
+
+def test_prefill_all_fields_goes_straight_to_review(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: a, type: title, label: A}")
+    s = Session(form=form)
+    out = engine.start(s, prefill={"a": "x"})
+    assert "review" in out.prompt.text.lower()
 
 
 def test_cancel(tmp_path, engine):

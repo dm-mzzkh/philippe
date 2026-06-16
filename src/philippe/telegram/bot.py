@@ -24,15 +24,17 @@ def run_bot(
     sink: RecordSink | None = None,
     store: SessionStore | None = None,
     catalog=None,
+    allowed_ids: set[int] | None = None,
 ) -> None:
     runner = Runner(
         forms, sink or LoggingSink(), store or MemorySessionStore(), catalog=catalog
     )
-    dispatcher = build_dispatcher(runner)
+    dispatcher = build_dispatcher(runner, allowed_ids=allowed_ids)
     bot = Bot(token)
 
     async def _main() -> None:
-        logger.info("starting bot with forms: %s", ", ".join(forms))
+        logger.info("starting bot with forms: %s%s", ", ".join(forms),
+                    f" (whitelist: {len(allowed_ids)} ids)" if allowed_ids else "")
         try:
             await bot.set_my_commands([
                 BotCommand(command="forms", description="List forms to fill"),

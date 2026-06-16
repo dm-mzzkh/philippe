@@ -8,6 +8,7 @@ from pathlib import Path
 
 TOKEN_ENV = "PHILIPPE_BOT_TOKEN"
 DATABASE_ENV = "DATABASE_URL"
+ALLOWED_ENV = "PHILIPPE_ALLOWED_IDS"  # comma-separated Telegram user ids
 
 
 def load_env(path: str | Path | None = None) -> None:
@@ -45,3 +46,15 @@ def resolve_token(explicit: str | None) -> str:
 def resolve_database_url(explicit: str | None) -> str | None:
     """The DB DSN if configured (flag or env), else None (→ logging sink)."""
     return explicit or os.environ.get(DATABASE_ENV)
+
+
+def resolve_allowed_ids(explicit: str | None) -> set[int] | None:
+    """Whitelist of Telegram user ids that may use the bot (flag or env). None →
+    open to everyone. Raises SystemExit on a malformed list."""
+    raw = explicit or os.environ.get(ALLOWED_ENV)
+    if not raw:
+        return None
+    try:
+        return {int(part) for part in raw.replace(" ", "").split(",") if part}
+    except ValueError:
+        raise SystemExit(f"{ALLOWED_ENV} must be comma-separated ids, e.g. 111,222")
