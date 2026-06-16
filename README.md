@@ -108,10 +108,14 @@ bot INSERTs each completed form as a row:
 ```bash
 cd db && docker compose up -d         # Postgres on :5432, pgweb on :8081
 # .env → DATABASE_URL=postgresql://bot:bot@localhost:5432/bot_dev
-uv run philippe run --form examples/task.yaml --form examples/log.yaml
+uv run philippe run --forms-dir examples   # task, log, and the today view
 ```
 
-Without `DATABASE_URL` records are only logged. See
+`examples/today.yaml` is an **actionable view** (`kind: query` + `action`):
+picked from `/forms`, it lists the tasks due today or overdue, and tapping one
+opens the `log` form with that task pre-filled — a one-tap "mark it done" loop.
+Restrict who may use the bot with `PHILIPPE_ALLOWED_IDS` (comma-separated
+Telegram ids). Without `DATABASE_URL` records are only logged. See
 [docs/database.md](docs/database.md) for the field→column mapping (dynamic
 `select` options, `repeat` → `period`+`every`, `context` columns, type casts).
 
@@ -151,9 +155,13 @@ SQL** — those live in adapters at the edges. See
 
 - [x] **MVP** — run the bot from a single `form.yaml` and collect one record.
 - [x] Persist answers to Postgres (INSERT) — see [docs/database.md](docs/database.md).
+- [x] Multiple forms in one bot, picked from a `/forms` menu.
+- [x] Read & actionable views (`kind: query`): list rows; tap → launch a prefilled form.
+- [x] Access whitelist (`PHILIPPE_ALLOWED_IDS`).
+- [ ] Scheduled reminders (push a view to the owner on a cron). *(from home_cal)*
+- [ ] Edit / delete existing rows — history & task management. *(from home_cal)*
+- [ ] Dump / load the whole DB as editable YAML. *(from home_cal)*
 - [ ] Generate a `form.yaml` from a table's schema.
-- [ ] Edit existing records, not just insert new ones.
-- [ ] Multiple forms / table picker in one bot.
 - [ ] Voice-to-text for `title` / `text` fields.
 
 ## See also
@@ -161,4 +169,5 @@ SQL** — those live in adapters at the edges. See
 - [docs/form-schema.md](docs/form-schema.md) — the form definition reference.
 - [docs/architecture.md](docs/architecture.md) — module structure & design.
 - [docs/database.md](docs/database.md) — mapping forms to DB rows; running with Postgres.
-- [examples/form.yaml](examples/form.yaml) — a complete example form.
+- [CLAUDE.md](CLAUDE.md) — orientation for working in this repo (commands, conventions, gotchas).
+- [examples/](examples/) — `task.yaml`, `log.yaml`, `today.yaml`, `history.yaml`, `form.yaml`.

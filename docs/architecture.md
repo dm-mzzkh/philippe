@@ -58,10 +58,9 @@ philippe/
 │       │
 │       ├── dialog/                # ── framework-agnostic conversation engine ──
 │       │   ├── __init__.py
-│       │   ├── engine.py          #   drives field order, Back, review, restart
-│       │   ├── session.py         #   per-user state: answers, cursor, field sub-state
-│       │   ├── review.py          #   on_submit: build review, edit-link routing
-│       │   └── ports.py           #   Presenter protocol (how output leaves the core)
+│       │   ├── engine.py          #   field order, Back/Skip, on_submit review, restart
+│       │   └── session.py         #   per-user state: answers, cursor, field sub-state
+│       │                          #   (review + Outcome types live in engine.py)
 │       │
 │       ├── state/                 # ── session storage (port + impls) ──
 │       │   ├── __init__.py
@@ -204,27 +203,27 @@ run).
 
 ### `dialog/` — the conversation engine
 
-Pure state machine that drives one form to completion. **No Telegram, no
-storage** — it receives an `Input` and a `Session`, and emits a `Prompt` (or a
-final `Commit`) for a `Presenter` to render.
+Pure, **synchronous** state machine that drives one form to completion. **No
+Telegram, no storage, no async** — `step(session, input)` returns an `Outcome`
+(`Show(prompt)` / `Completed(record, rendered)` / `Cancelled`) and the adapter
+does the I/O. (Originally planned as a `Presenter` push-port; returning
+`Outcome`s proved simpler and just as testable — see Implementation notes.)
 
 - **`session.py`** — `Session`: the form, `answers: dict[str, Any]`, a `cursor`
   (current field index), each field's `fstate`, and a `mode`
-  (`FILLING` / `REVIEW`). Plus a `return_to_review` flag for edit-from-review.
+  (`filling` / `review`). Plus a `return_to_review` flag for edit-from-review.
 - **`engine.py`** — the core loop:
   1. Ask the current field's `FieldType.start`/`handle`.
   2. On `Done(value)`, store it under the field `key`, advance the cursor.
-  3. On `Back`, pop to the previous field (kept answers preserved).
-  4. After the last field, switch to `REVIEW`.
-- **review (in `engine.py`)** — builds one button per field labelled
-  `<field label>: <short answer>` (the value rendered via the field's `render`,
-  then shortened to one line). Each button is an **edit link** that sets the
-  cursor back to that field with `return_to_review = True`; the **Cancel** /
-  **Submit & fill again** row finishes. On submit the engine returns the record
-  for the adapter's `RecordSink`, then restarts the session for the next entry.
-- **`ports.py`** — the `Presenter` protocol: `show(prompt)` / `commit(record)`.
-  The engine outputs through this; the Telegram adapter implements it. This is
-  the seam that keeps the engine UI-agnostic.
+  3. On `Back`, pop to the previous field (kept answers preserved); `Skip`
+     stores `None` for an optional field.
+  4. After the last field, switch to `review`.
+- **review** (also in `engine.py`) — builds one button per field labelled
+  `<field label>: <short answer>` (rendered via the field's `render`, shortened
+  to one line). Each button is an **edit link** that sets the cursor back to that
+  field with `return_to_review = True`; the **Cancel** / **Submit & fill again**
+  row finishes. On `Submit` the engine returns `Completed(record, rendered)` for
+  the adapter to save, then `restart`s the session for the next entry.
 
 ### `state/` — session storage (port)
 
@@ -264,12 +263,20 @@ Values only ever travel as parameters.
 ### `db/` — database access
 
 The only package that touches Postgres, and only `connection.py` imports
-psycopg (lazily). `catalog.py` reads a dynamic `select`'s options; `resolve.py`
-produces a per-dialog copy of the form with those options materialized so
-**fields stay I/O-free** — they only ever see static `(label, value)` choices.
-`SqlCatalog` and `SqlSink` take an injected connection, so both are unit-tested
-with a fake (no live DB). The Telegram adapter runs these blocking calls off the
-event loop with `asyncio.to_thread`.
+psycopg (lazily). `catalog.py` has two reads: `options(source)` for a dynamic
+`select` (structured `{table,value,label}` or a raw `{query}`), and `query(sql)`
+for a `kind: query` read view. `resolve.py` produces a per-dialog copy of the
+form with dynamic-select options materialized so **fields stay I/O-free** — they
+only ever see static `(label, value)` choices. `SqlCatalog` and `SqlSink` take an
+injected connection, so both are unit-tested with a fake (no live DB). The
+Telegram adapter runs these blocking calls off the event loop with
+`asyncio.to_thread`.
+
+### read views (`kind: query`)
+
+A `query` form skips the engine entirely: the adapter runs its SQL via
+`catalog.query` and lists the rows (the SQL's `label` column) as plain text.
+This is a small parallel read path — it touches no fields, no dialog, no sink.
 
 ### field → column mapping
 
@@ -315,7 +322,7 @@ Telegram Update
               ▼              ▼                 ▼
             next Prompt ◄── engine builds next field's start() ──┘
               │  (engine appends the Back button)
-              ▼  dialog Presenter (telegram/handlers.py)
+              ▼  Show(prompt) → telegram/handlers.py
    telegram/keyboards.py + render.py → reply message
 ```
 
@@ -339,14 +346,16 @@ After the last field the engine enters `REVIEW`; on **Submit** it calls
 
 ## Suggested dependencies
 
-| Concern | Library |
-|---------|---------|
-| Telegram | `aiogram` (async, modern) |
-| Form models / validation | `pydantic` v2 |
-| YAML parsing | `pyyaml` |
-| CLI | `argparse` (stdlib) or `typer` |
-| DB sink (roadmap) | `SQLAlchemy` |
-| Tests | `pytest` |
+| Concern | Library | Extra |
+|---------|---------|-------|
+| Form models / validation | `pydantic` v2 | core |
+| YAML parsing | `pyyaml` | core |
+| `.env` loading | `python-dotenv` | core |
+| CLI | `argparse` (stdlib) | core |
+| Telegram | `aiogram` (async, v3) | `telegram` |
+| Postgres | `psycopg` v3 (`[binary]`) | `db` |
+| both of the above | | `bot` |
+| Tests | `pytest` | dev |
 
 ## Implementation notes (MVP)
 
@@ -365,6 +374,8 @@ What the shipped MVP does, and two small deviations from the plan above:
   button's *index* and keeps an index→value map per chat, sidestepping
   Telegram's 64-byte callback-data limit.
 
-Covered by `tests/` (18 tests): form loading & validation errors, field order,
-Back navigation, Skip, range re-ask, the one-message `repeat`, edit-from-review,
-cancel, and submit-then-restart.
+Covered by `tests/` (40 tests, no live DB or network — DB code is tested with a
+fake connection): form loading & validation errors, field order, Back/Skip,
+range re-ask, the one-message `repeat`, edit-from-review, cancel,
+submit-then-restart, field→column mapping, SQL build with type casts, dynamic +
+raw-query select options, form resolution, context, and `kind: query` loading.

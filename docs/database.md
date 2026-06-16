@@ -28,9 +28,32 @@ In the bot, `/forms` lists the offered forms; tap one to fill it.
 
 - With `DATABASE_URL` set, completed forms are **INSERT**ed into `table`.
 - Without it, records are only logged — and a form that *needs* the DB (dynamic
-  options or `context`) refuses to start with a clear message.
+  options, `context`, or `kind: query`) refuses to start with a clear message.
 - `--database-url` overrides the env var; `--env-file` points at a non-default
   `.env`.
+
+### Loading / resetting the schema
+
+`initdb/home_cal.sql` is mounted at `/docker-entrypoint-initdb.d`, but Postgres
+runs init scripts **only on first initialization of an empty data directory**.
+`docker compose restart` (or `up` without `down`) does *not* re-run it — so if
+you see `relation "tasks" does not exist`, the schema simply isn't loaded.
+
+`home_cal.sql` is idempotent (it drops and recreates everything), so reload it
+into the running container at any time:
+
+```bash
+cd db
+docker compose exec -T db psql -U bot -d bot_dev < initdb/home_cal.sql
+docker compose exec db psql -U bot -d bot_dev -c '\dt'   # verify tasks/logs exist
+```
+
+Or recreate from scratch — note the `-v`, or the anonymous PGDATA volume sticks
+around and init is skipped again:
+
+```bash
+docker compose down -v && docker compose up -d
+```
 
 ## How fields map to columns
 
@@ -77,10 +100,27 @@ A dynamic `select` shows a human label but stores a typed value (an id):
     order_by: title
 ```
 
-Options are queried **once per dialog** when the user runs `/start`, so each
+Options are materialized **once per dialog** when the user runs `/start`, so each
 conversation sees the current set of (e.g. active) rows. The query lives in the
 adapter, not the field — fields stay free of I/O; see
 [`db/resolve.py`](../src/philippe/db/resolve.py).
+
+For anything the structured form can't express (DISTINCT, joins, aggregates),
+use a raw `query` instead of `table/value/label`:
+
+```yaml
+- key: who
+  type: select
+  label: Who did it?
+  column: user_name
+  allow_custom: true
+  options:
+    query: SELECT DISTINCT user_name AS value, user_name AS label
+           FROM logs WHERE user_name IS NOT NULL ORDER BY 1
+```
+
+The query must return `label` and `value` columns (or a single column, used for
+both). It is raw SQL from the trusted form file, like `where`/`order_by`.
 
 ### `context` — values from the message
 
@@ -93,6 +133,39 @@ context:
 ```
 
 Available sources: `user_id`, `user_name`, `chat_id`.
+
+## Views (`kind: query`)
+
+A form with `kind: query` runs its `query` and lists the rows (the SQL must
+return a `label` column). It comes in two flavours:
+
+- **read-only** (no `action`) — a plain text list, nothing written.
+- **actionable** (with `action`) — each row is a button; tapping it launches
+  another form pre-filled from that row.
+
+[`examples/today.yaml`](../examples/today.yaml) lists tasks due today or overdue
+(computed from `tasks` + the latest `logs.done_at`, `last_done + every×period`
+via `make_interval`; `🆕` = never done, `🔴` = overdue), and is **actionable** —
+tapping a task opens the `log` form with that task pre-filled, so the user just
+confirms the date / adds a comment. This reproduces a "mark it done" loop while
+staying fully generic.
+
+```yaml
+name: today
+title: Сегодня нужно сделать
+kind: query
+action:
+  form: log              # tap a row → start this form…
+  prefill: {task: value} # …with field `task` set to the row's `value` column
+query: |
+  SELECT
+    t.id AS value,                         -- fed into prefill
+    '🆕 ' || t.title || ' — 🔴 N дн.' AS label   -- button text
+  FROM tasks t ...
+```
+
+The prefilled field is skipped in the launched dialog; the user answers only the
+remaining fields, then reviews and submits as usual.
 
 ## Type handling
 
