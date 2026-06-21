@@ -60,6 +60,7 @@ from . import (  # noqa: E402,F401
     repeat,
     select,
     text,
+    time,
     title,
 )
 

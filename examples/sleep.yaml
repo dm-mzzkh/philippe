@@ -1,0 +1,28 @@
+# Record one night of sleep — writes a row into the `sleeps` table.
+name: sleep
+title: Записать сон
+table: sleeps
+fields:
+  # Дата начала сна -> sleeps.sleep_date. Relative-day buttons; today by default.
+  - key: sleep_date
+    type: date
+    label: Дата начала сна
+    default: today
+
+  # Начало сна -> sleeps.start_at (time, HH:MM).
+  - key: start_at
+    type: time
+    label: Начало сна (ЧЧ:ММ)
+
+  # Конец сна -> sleeps.end_at. If it's <= start (crossed midnight) the view
+  # adds 24h when computing the duration.
+  - key: end_at
+    type: time
+    label: Конец сна (ЧЧ:ММ)
+
+  # Комментарий по желанию -> sleeps.comment.
+  - key: comment
+    type: text
+    label: Комментарий
+    required: false
+# After the last field the bot shows the review (Cancel / Submit & fill again).

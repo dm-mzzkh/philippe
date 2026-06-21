@@ -101,6 +101,10 @@
          * day and month — 01.01, 1.1, or 1 1
          * day, month and year — same separators, e.g. 01.01.2026
 
+   * time - a clock time, typed as HH:MM
+      * accepts 23:30, 23.30, 2330, or 7:15
+      * stored as a real time value (a TIME column)
+
    * repeat - a recurrence rule, one message with two button rows
       * row 1) period
          * Every day
@@ -146,4 +150,9 @@
    * log.yaml — into `logs`: dynamic select (task_id), date, optional text, context
    * today.yaml — `kind: query` actionable view (tap a due task → log it)
    * history.yaml — `kind: query` read view (recent completion log)
+   * sleep.yaml / sleep-log.yaml — record a night's sleep (date + time fields) /
+     view the sleep diary with computed hours (👍 if > 7h)
+   * workout.yaml / workout-log.yaml — log a gym set (type or pick an exercise —
+     free text suggested from past entries — sets × reps @ weight) / view the
+     recent training diary
    * form.yaml — every field type at once (no table → logged only)

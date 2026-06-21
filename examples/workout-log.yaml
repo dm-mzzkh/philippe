@@ -1,0 +1,16 @@
+# A read-only VIEW (kind: query): recent workout sets, newest first.
+# Each row: date · exercise · подходы×повт @ вес. Needs a database.
+name: workout-log
+title: Дневник тренировок
+kind: query
+query: |
+  SELECT
+    to_char(ws.workout_date, 'DD.MM') || ' · ' || ws.exercise
+      || ' · ' || ws.sets || '×' || ws.reps
+      || CASE WHEN ws.weight IS NOT NULL
+              THEN ' @ ' || to_char(ws.weight, 'FM999990.##') || 'кг'
+              ELSE '' END
+      AS label
+  FROM workout_sets ws
+  ORDER BY ws.workout_date DESC, ws.id DESC
+  LIMIT 20;

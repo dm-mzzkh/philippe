@@ -55,6 +55,26 @@ around and init is skipped again:
 docker compose down -v && docker compose up -d
 ```
 
+### Deploying the full stack (bot + DB)
+
+`db/docker-compose.yml` is for **local dev** — it publishes Postgres on `:5432`
+and pgweb on `:8081` so a host-side `uv run philippe` can reach them.
+
+The root [`compose.yml`](../compose.yml) is the **production** stack: it builds
+the bot image ([`Dockerfile`](../Dockerfile)) and runs bot + Postgres + pgweb
+together. Postgres is *not* published — the bot reaches it over the compose
+network — and pgweb binds to `PGWEB_BIND` (default `127.0.0.1`; set it to the
+host's Tailscale IP, see [`.env.example`](../.env.example)).
+
+```bash
+# .env needs PHILIPPE_BOT_TOKEN (+ optional PHILIPPE_ALLOWED_IDS, PGWEB_BIND).
+# DATABASE_URL is set by compose.yml itself (db:5432), so .env's value is dev-only.
+docker compose up -d --build          # uses the root compose.yml
+```
+
+`home_cal.sql` runs once when the named `pgdata` volume is first created; reload
+it later with the `docker compose exec ... psql` command above.
+
 ## How fields map to columns
 
 The submitted answers become a column-keyed row. Most fields write one column

@@ -1,0 +1,64 @@
+# Record one exercise of a workout — writes a row into `workout_sets`.
+# A "training day" is just workout_date; after submit the form restarts
+# (Submit & fill again), so adding several exercises in a row is quick.
+# One row = N подходов × M повторений @ вес (the uniform set model).
+name: workout
+title: Записать упражнение
+table: workout_sets
+
+# Columns filled from the Telegram message, not asked as fields:
+context:
+  - {column: user_id,   from: user_id}
+  - {column: user_name, from: user_name}
+
+fields:
+  # Which exercise -> workout_sets.exercise (free text). Nothing is locked: type
+  # any exercise name. The buttons just *suggest* exercises you've logged before
+  # (DISTINCT over workout_sets); picking one or typing your own both store the name.
+  - key: exercise
+    type: select
+    label: Какое упражнение?
+    column: exercise
+    allow_custom: true
+    options:
+      query: |
+        SELECT DISTINCT exercise AS label, exercise AS value
+        FROM workout_sets
+        ORDER BY exercise
+
+  # When -> workout_sets.workout_date. Relative-day buttons; Today is default.
+  - key: workout_date
+    type: date
+    label: Когда?
+    default: today
+
+  # Подходы -> workout_sets.sets.
+  - key: sets
+    type: number
+    label: Сколько подходов?
+    min: 1
+    max: 50
+    presets: [3, 4, 5]
+
+  # Повторения в подходе -> workout_sets.reps.
+  - key: reps
+    type: number
+    label: Повторений в подходе?
+    min: 1
+    max: 1000
+    presets: [8, 10, 12, 15]
+
+  # Вес в кг -> workout_sets.weight. Skip для упражнений с собственным весом.
+  - key: weight
+    type: number
+    label: Вес, кг
+    min: 0
+    max: 1000
+    required: false
+
+  # Заметка по желанию -> workout_sets.comment.
+  - key: comment
+    type: text
+    label: Комментарий
+    required: false
+# After the last field the bot shows the review (Cancel / Submit & fill again).

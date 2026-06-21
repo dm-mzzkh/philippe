@@ -1,0 +1,25 @@
+# A read-only VIEW (kind: query): the sleep diary, newest first.
+# Each row: DD.MM  start-end  hours  👍/👎  (👍 if > 7 hours, else 👎),
+# with the comment on a second line when present.
+name: sleep_log
+title: Дневник сна
+kind: query
+query: |
+  SELECT
+    to_char(s.sleep_date, 'DD.MM') || ' '
+    || to_char(s.start_at, 'HH24:MI') || '-' || to_char(s.end_at, 'HH24:MI') || '  '
+    || round(h.hours::numeric, 1)::text || ' ч  '
+    || CASE WHEN h.hours > 7 THEN '👍' ELSE '👎' END
+    || CASE WHEN s.comment IS NOT NULL AND s.comment <> ''
+            THEN E'\n' || s.comment ELSE '' END
+    AS label
+  FROM sleeps s
+  CROSS JOIN LATERAL (
+    SELECT EXTRACT(EPOCH FROM (
+      s.end_at - s.start_at
+      + CASE WHEN s.end_at <= s.start_at THEN INTERVAL '24 hours'
+             ELSE INTERVAL '0 hours' END
+    )) / 3600 AS hours
+  ) h
+  ORDER BY s.sleep_date DESC, s.start_at DESC
+  LIMIT 30;

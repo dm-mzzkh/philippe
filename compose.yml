@@ -1,0 +1,52 @@
+# Full production stack for the home server: Postgres + the bot (+ pgweb).
+#   docker compose up -d --build
+# Postgres is NOT published to the host — the bot reaches it over the compose
+# network. pgweb is bound to the Tailscale address only (PGWEB_BIND in .env).
+name: philippe
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: bot
+      POSTGRES_DB: bot_dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # home_cal.sql runs once, only when the volume is first created.
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d bot_dev"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+    image: philippe-bot:latest
+    env_file: .env                       # PHILIPPE_BOT_TOKEN (+ optional PHILIPPE_ALLOWED_IDS)
+    environment:
+      DATABASE_URL: postgresql://bot:bot@db:5432/bot_dev
+    volumes:
+      - ./examples:/app/examples:ro      # edit forms + `docker compose restart bot`
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  pgweb:
+    image: sosedoff/pgweb:latest
+    ports:
+      # PGWEB_BIND is set to the Tailscale IP in .env → reachable only over the tailnet.
+      - "${PGWEB_BIND:-127.0.0.1}:8081:8081"
+    environment:
+      PGWEB_DATABASE_URL: postgres://bot:bot@db:5432/bot_dev?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

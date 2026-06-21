@@ -44,6 +44,7 @@ answer is validated. The full catalogue of types lives in
 | `repeat` | Pick a period (daily / weekly / monthly) and a frequency (1–365) |
 | `bool` | Tap **Yes** / **No** |
 | `date` | Tap a relative day, or type a weekday / `dd.mm` / `dd.mm.yyyy` |
+| `time` | Type a clock time as `HH:MM` |
 | `number` | Type a number in a `[X, Y]` range, optionally via preset buttons |
 | `select` | Tap one of several options; optionally type a custom value |
 | `photo` / `media` / `audio` | Send a photo, file or audio message |
@@ -170,4 +171,4 @@ SQL** — those live in adapters at the edges. See
 - [docs/architecture.md](docs/architecture.md) — module structure & design.
 - [docs/database.md](docs/database.md) — mapping forms to DB rows; running with Postgres.
 - [CLAUDE.md](CLAUDE.md) — orientation for working in this repo (commands, conventions, gotchas).
-- [examples/](examples/) — `task.yaml`, `log.yaml`, `today.yaml`, `history.yaml`, `form.yaml`.
+- [examples/](examples/) — `task.yaml`, `log.yaml`, `today.yaml`, `history.yaml`, `sleep.yaml`, `sleep-log.yaml`, `workout.yaml`, `workout-log.yaml`, `form.yaml`.

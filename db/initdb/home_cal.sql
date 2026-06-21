@@ -9,6 +9,8 @@
 BEGIN;
 
 -- Drop dependents first (logs references tasks), then the enum type.
+DROP TABLE IF EXISTS workout_sets;
+DROP TABLE IF EXISTS sleeps;
 DROP TABLE IF EXISTS logs;
 DROP TABLE IF EXISTS tasks;
 DROP TYPE  IF EXISTS task_period;
@@ -36,6 +38,35 @@ CREATE TABLE logs (
 
 CREATE INDEX idx_logs_task ON logs (task_id, done_at DESC);
 
+-- Sleep diary: one row per night. start_at/end_at are clock times; a night that
+-- crosses midnight has end_at <= start_at (the view adds 24h to get duration).
+CREATE TABLE sleeps (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  sleep_date DATE        NOT NULL DEFAULT CURRENT_DATE,
+  start_at   TIME        NOT NULL,
+  end_at     TIME        NOT NULL,
+  comment    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_sleeps_date ON sleeps (sleep_date DESC);
+
+-- Workout diary: one row per exercise (N sets × M reps @ weight). The exercise
+-- name is free text; the form's select just suggests names logged before.
+CREATE TABLE workout_sets (
+  id           INTEGER      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  workout_date DATE         NOT NULL DEFAULT CURRENT_DATE,
+  exercise     TEXT         NOT NULL,      -- free text; past entries just suggest it
+  sets         INTEGER      NOT NULL CHECK (sets BETWEEN 1 AND 50),
+  reps         INTEGER      NOT NULL CHECK (reps BETWEEN 1 AND 1000),
+  weight       NUMERIC(6,2) CHECK (weight >= 0),   -- кг; NULL = bodyweight
+  comment      TEXT,
+  user_id      BIGINT,
+  user_name    TEXT,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_workout_sets_date ON workout_sets (workout_date DESC);
 
 -- ---------------------------------------------------------------------------
 -- seed: tasks

@@ -119,6 +119,21 @@ def test_number_out_of_range_reasks(tmp_path, engine):
     assert s.answers["n"] == 3
 
 
+def test_time_field_parses_and_stores_a_time(tmp_path, engine):
+    import datetime as dt
+    form = make_form(tmp_path, """
+        - {key: start_at, type: time, label: Start}
+    """)
+    s = Session(form=form)
+    out = engine.start(s)
+    out = engine.step(s, Input(text="bad"))           # not a time → re-ask
+    assert "HH:MM" in out.prompt.text
+    out = engine.step(s, Input(text="2330"))          # 23:30 → review
+    assert "review" in out.prompt.text.lower()
+    done = engine.step(s, Input(button=SUBMIT))
+    assert done.record == {"start_at": dt.time(23, 30)}
+
+
 def test_repeat_layout_two_rows_nothing_preselected(tmp_path, engine):
     form = make_form(tmp_path, "- {key: r, type: repeat, label: R}")
     s = Session(form=form)

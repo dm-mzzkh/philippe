@@ -20,7 +20,7 @@ uv sync                  # core (pydantic, pyyaml, python-dotenv) + pytest
 uv sync --extra telegram # + aiogram (for `run`)
 uv sync --extra bot      # + aiogram AND psycopg (run against Postgres)
 
-uv run pytest                              # all tests (40, no DB/network needed)
+uv run pytest                              # all tests (48, no DB/network needed)
 uv run pytest tests/test_engine.py -k back # one file / filter
 
 uv run philippe validate --form examples/task.yaml   # load + print a form, no token
@@ -148,4 +148,7 @@ the adapter does the async I/O. There is no `Presenter` push-port — see
 - `docs/architecture.md` — module-by-module design + rationale.
 - `docs/database.md` — field→column mapping, type casts, running with Postgres.
 - `examples/` — `task.yaml`, `log.yaml` (DB forms), `today.yaml` (actionable
-  view), `history.yaml` (read view), `form.yaml` (all field types, logging only).
+  view), `history.yaml` (read view), `sleep.yaml` / `sleep-log.yaml` (sleep diary
+  with the `time` field), `workout.yaml` / `workout-log.yaml` (gym diary: type or
+  pick an exercise — free text suggested from past entries — log подходы×повт×вес /
+  view it), `form.yaml` (all field types, logging only).
