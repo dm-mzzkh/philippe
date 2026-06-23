@@ -8,7 +8,7 @@ I/O: feed it an :class:`Input` and a :class:`Session`, get back an
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..fields import Ask, Button, Done, InputKind, Prompt, get_field_type
@@ -37,10 +37,13 @@ class Show:
 @dataclass
 class Completed:
     """The form was submitted. ``record`` is ready for the sink; ``rendered``
-    is the human view used for the confirmation message."""
+    is the human view used for the confirmation message.
+    ``restart`` is False when ``submit_once: true`` — the adapter should show
+    the menu instead of restarting the form."""
 
     record: dict[str, Any]
     rendered: dict[str, str]
+    restart: bool = True
 
 
 @dataclass
@@ -65,9 +68,12 @@ class Engine:
                 session.answers[key] = value
         fields = session.form.fields
         session.cursor = 0
-        while (session.cursor < len(fields)
-               and fields[session.cursor].key in session.answers):
-            session.cursor += 1  # skip pre-filled fields
+        # Skip pre-filled fields and invisible fields
+        while session.cursor < len(fields) and (
+            fields[session.cursor].key in session.answers
+            or not self._visible(fields[session.cursor], session.answers)
+        ):
+            session.cursor += 1
         if session.cursor >= len(fields):
             return self._show_review(session)
         return self._ask_current(session)
@@ -106,7 +112,12 @@ class Engine:
             session.return_to_review = False
             return self._show_review(session)
         session.cursor += 1
-        if session.cursor >= len(session.form.fields):
+        # Skip invisible fields
+        fields = session.form.fields
+        while (session.cursor < len(fields)
+               and not self._visible(fields[session.cursor], session.answers)):
+            session.cursor += 1
+        if session.cursor >= len(fields):
             return self._show_review(session)
         return self._ask_current(session)
 
@@ -117,12 +128,17 @@ class Engine:
         if session.cursor == 0:
             return Cancelled()  # Back on the first field exits the form
         session.cursor -= 1
+        # Skip invisible fields going backwards
+        fields = session.form.fields
+        while (session.cursor > 0
+               and not self._visible(fields[session.cursor], session.answers)):
+            session.cursor -= 1
         return self._ask_current(session)
 
     def _ask_current(self, session: Session) -> Outcome:
         spec = session.current
         field_type = get_field_type(spec.type)
-        fstate = session.fstate[spec.key] = {}  # fresh scratch space on (re)entry
+        fstate = session.fstate.setdefault(spec.key, {})  # preserve on re-entry (Back)
         prompt = field_type.start(spec, fstate)
         return Show(self._decorate(prompt, session))
 
@@ -130,8 +146,8 @@ class Engine:
         """Append the universal control row: optional Skip, then Back."""
         row = []
         if not session.current.required:
-            row.append(Button("Skip", SKIP))
-        row.append(Button("◀ Back", BACK))
+            row.append(Button(self._label(session, "skip", "Skip"), SKIP))
+        row.append(Button(self._label(session, "back", "◀ Back"), BACK))
         prompt.buttons = prompt.buttons + [row]
         return prompt
 
@@ -141,6 +157,8 @@ class Engine:
         session.mode = "review"
         buttons = []
         for spec in session.form.fields:
+            if not self._visible(spec, session.answers):
+                continue
             value = session.answers.get(spec.key)
             shown = (
                 get_field_type(spec.type).render(spec, value)
@@ -149,10 +167,18 @@ class Engine:
             )
             label = f"{spec.label}: {_short(shown)}"
             buttons.append([Button(label, EDIT_PREFIX + spec.key)])
+        if session.form.submit_once:
+            submit_label = self._label(session, "submit", "✔ Submit")
+        else:
+            submit_label = self._label(session, "submit", "✔ Submit & fill again")
         buttons.append(
-            [Button("✖ Cancel", CANCEL), Button("✔ Submit & fill again", SUBMIT)]
+            [Button(self._label(session, "cancel", "✖ Cancel"), CANCEL),
+             Button(submit_label, SUBMIT)]
         )
-        text = "Please review your answers (tap a field to edit):"
+        text = self._label(
+            session, "review_prompt",
+            "Please review your answers (tap a field to edit):"
+        )
         return Show(Prompt(text, buttons, {InputKind.BUTTON}))
 
     def _step_review(self, session: Session, inp: Input) -> Outcome:
@@ -176,6 +202,8 @@ class Engine:
         record: dict[str, Any] = {}
         rendered: dict[str, str] = {}
         for spec in session.form.fields:
+            if not self._visible(spec, session.answers):
+                continue
             value = session.answers.get(spec.key)
             field_type = get_field_type(spec.type)
             if value is None:
@@ -186,7 +214,23 @@ class Engine:
             rendered[spec.label] = (
                 field_type.render(spec, value) if value is not None else "—"
             )
-        return Completed(record=record, rendered=rendered)
+        return Completed(
+            record=record,
+            rendered=rendered,
+            restart=not session.form.submit_once,
+        )
+
+    # --- helpers ----------------------------------------------------------
+
+    def _label(self, session: Session, key: str, default: str) -> str:
+        """Look up a localised system label from the form's ``labels`` dict."""
+        return session.form.labels.get(key, default)
+
+    def _visible(self, spec, answers: dict) -> bool:
+        """Return True if the field's show_if condition passes (or has none)."""
+        if spec.show_if is None:
+            return True
+        return answers.get(spec.show_if["key"]) == spec.show_if["value"]
 
 
 def _short(text: object, limit: int = 24) -> str:

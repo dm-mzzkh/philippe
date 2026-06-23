@@ -261,3 +261,138 @@ def test_submit_then_restart_clears_answers(tmp_path, engine):
     out = engine.restart(s)
     assert out.prompt.text == "A"
     assert s.answers == {}
+
+
+# --- fstate preserved on Back -----------------------------------------------
+
+
+def test_back_preserves_repeat_fstate(tmp_path, engine):
+    """Going Back to a repeat field preserves the partial period selection."""
+    form = make_form(tmp_path, """
+        - {key: r, type: repeat, label: R}
+        - {key: a, type: title, label: A}
+    """)
+    s = Session(form=form)
+    engine.start(s)
+    engine.step(s, Input(button="week"))   # partial: period set, no frequency yet
+    engine.step(s, Input(button="2"))      # complete → advance to A
+    engine.step(s, Input(back=True))       # back to R
+    # fstate should still have period="week", every=2 from before
+    assert s.fstate.get("r", {}).get("period") == "week"
+    assert s.fstate.get("r", {}).get("every") == 2
+
+
+# --- UI Labels ---------------------------------------------------------------
+
+
+def test_custom_labels_appear_in_buttons(tmp_path, engine):
+    """Labels from the form's ``labels`` dict replace the default strings."""
+    p = tmp_path / "form.yaml"
+    p.write_text(textwrap.dedent("""
+        name: t
+        title: T
+        labels:
+          back: "◀ Назад"
+          skip: "Пропустить"
+          cancel: "✖ Отмена"
+          submit: "✔ Сохранить"
+          review_prompt: "Проверь ответы:"
+        fields:
+          - key: a
+            type: title
+            label: A
+            required: false
+    """), encoding="utf-8")
+    from philippe.forms import load_form
+    form = load_form(p)
+    s = Session(form=form)
+    out = engine.start(s)
+    btn_labels = labels(out)
+    assert "Пропустить" in btn_labels
+    assert "◀ Назад" in btn_labels
+
+    engine.step(s, Input(text="x"))  # → review
+    out = engine.step(s, Input(text="x"))  # still review after bad input
+    # go to review properly
+    engine.start(s)
+    out = engine.step(s, Input(text="x"))
+    assert "Проверь ответы:" in out.prompt.text
+    btn_labels = labels(out)
+    assert "✖ Отмена" in btn_labels
+    assert "✔ Сохранить" in btn_labels
+
+
+# --- submit_once -------------------------------------------------------------
+
+
+def test_submit_once_completed_has_restart_false(tmp_path, engine):
+    """submit_once: true → Completed.restart is False."""
+    p = tmp_path / "form.yaml"
+    p.write_text(textwrap.dedent("""
+        name: t
+        title: T
+        submit_once: true
+        fields:
+          - {key: a, type: title, label: A}
+    """), encoding="utf-8")
+    from philippe.forms import load_form
+    form = load_form(p)
+    s = Session(form=form)
+    engine.start(s)
+    engine.step(s, Input(text="x"))
+    done = engine.step(s, Input(button=SUBMIT))
+    assert isinstance(done, Completed)
+    assert done.restart is False
+
+
+def test_default_form_completed_has_restart_true(tmp_path, engine):
+    form = make_form(tmp_path, "- {key: a, type: title, label: A}")
+    s = Session(form=form)
+    engine.start(s)
+    engine.step(s, Input(text="x"))
+    done = engine.step(s, Input(button=SUBMIT))
+    assert done.restart is True
+
+
+# --- show_if -----------------------------------------------------------------
+
+
+def test_show_if_hides_field_when_condition_unmet(tmp_path, engine):
+    """Field with show_if is skipped when the condition does not match."""
+    form = make_form(tmp_path, """
+        - {key: type, type: title, label: Type}
+        - key: extra
+          type: title
+          label: Extra
+          show_if: {key: type, value: "special"}
+        - {key: name, type: title, label: Name}
+    """)
+    s = Session(form=form)
+    engine.start(s)
+    engine.step(s, Input(text="normal"))   # type = "normal" → extra hidden
+    out = engine.step(s, Input(text="x"))  # should go to Name, not Extra
+    # If extra was not skipped we'd be on Extra now; with skip we're on review
+    assert "review" in out.prompt.text.lower()
+    done = engine.step(s, Input(button=SUBMIT))
+    assert "extra" not in done.record       # hidden field not in record
+
+
+def test_show_if_shows_field_when_condition_met(tmp_path, engine):
+    """Field with show_if is included when the condition matches."""
+    form = make_form(tmp_path, """
+        - {key: type, type: title, label: Type}
+        - key: extra
+          type: title
+          label: Extra
+          show_if: {key: type, value: "special"}
+        - {key: name, type: title, label: Name}
+    """)
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(text="special"))  # type = "special" → extra visible
+    assert out.prompt.text == "Extra"            # asked for Extra
+    engine.step(s, Input(text="bonus"))
+    engine.step(s, Input(text="Alice"))          # name
+    done = engine.step(s, Input(button=SUBMIT))
+    assert done.record["extra"] == "bonus"
+    assert done.record["name"] == "Alice"

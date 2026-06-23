@@ -38,8 +38,9 @@ fields:
 
   - key: who
     type: select
-    label: who did it?
+    label: Кто сделал?
     column: user_name
+    required: false
     allow_custom: true
     options:
       query: SELECT DISTINCT user_name AS value, user_name AS label FROM logs WHERE user_name IS NOT NULL ORDER BY 1

@@ -230,8 +230,13 @@ class Runner:
                     f"• {label}: {value}" for label, value in outcome.rendered.items()
                 ]
                 await message.answer("\n".join(lines))
-                outcome = self.engine.restart(session)
-                continue
+                if outcome.restart:
+                    outcome = self.engine.restart(session)
+                    continue
+                self.store.drop(chat_id)
+                self._actions.pop(chat_id, None)
+                await self.show_menu(message, edit=edit)
+                return
             if isinstance(outcome, Cancelled):
                 # Cancel, or Back on the first field → drop the form and return
                 # to the /forms menu (editing the message in place if from a tap).

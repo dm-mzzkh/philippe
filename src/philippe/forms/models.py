@@ -29,6 +29,9 @@ class FieldSpec(BaseModel):
     # to more than one column (e.g. ``repeat`` → period + every), in which case
     # it ignores this and names its own columns.
     column: str | None = None
+    # Conditional visibility: {key: <field_key>, value: <expected_value>}.
+    # Field is shown only when the named earlier field equals the given value.
+    show_if: dict[str, Any] | None = None
 
 
 class QueryAction(BaseModel):
@@ -66,6 +69,8 @@ class FormSpec:
     kind: str = "form"  # "form" | "query"
     query: str | None = None
     action: QueryAction | None = None  # query rows: tap → launch a form (prefilled)
+    labels: dict[str, str] = field(default_factory=dict)  # localise system strings
+    submit_once: bool = False  # True → submit goes back to menu, not fill again
 
     def field_index(self, key: str) -> int:
         """Index of the field with ``key`` (raises ``KeyError`` if absent)."""

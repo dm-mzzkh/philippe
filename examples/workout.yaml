@@ -22,9 +22,10 @@ fields:
     allow_custom: true
     options:
       query: |
-        SELECT DISTINCT exercise AS label, exercise AS value
+        SELECT exercise AS label, exercise AS value
         FROM workout_sets
-        ORDER BY exercise
+        GROUP BY exercise
+        ORDER BY max(workout_date) DESC
 
   # When -> workout_sets.workout_date. Relative-day buttons; Today is default.
   - key: workout_date
@@ -54,6 +55,7 @@ fields:
     label: Вес, кг
     min: 0
     max: 1000
+    presets: [40, 60, 80, 100]
     required: false
 
   # Заметка по желанию -> workout_sets.comment.

@@ -16,6 +16,10 @@ _REL = [
     ("Tomorrow", "rel:1", 1),
 ]
 
+# Maps spec.default value → the button delta that should be marked "(default)".
+# Keys not present here mean "no button is highlighted" (e.g. a specific ISO date).
+_DEFAULT_DELTA: dict[str | None, int] = {None: 0, "today": 0, "yesterday": -1}
+
 _WEEKDAYS = {
     "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
     "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
@@ -47,8 +51,9 @@ class Date(FieldType):
 
     def _keyboard(self, spec):
         row = []
+        marked = _DEFAULT_DELTA.get(spec.default)  # None → no button highlighted
         for label, value, delta in _REL:
-            mark = " (default)" if (delta == 0 and (spec.default in (None, "today"))) else ""
+            mark = " (default)" if marked is not None and delta == marked else ""
             row.append(Button(label + mark, value))
         return [row[:2], row[2:]]
 

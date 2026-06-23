@@ -30,6 +30,8 @@ class _Envelope(BaseModel):
     action: QueryAction | None = None
     context: list[ContextColumn] = []
     fields: list[dict[str, Any]] = []
+    labels: dict[str, str] = {}
+    submit_once: bool = False
 
 
 def load_form(path: str | Path) -> FormSpec:
@@ -71,6 +73,8 @@ def load_form(path: str | Path) -> FormSpec:
         kind=envelope.kind,
         query=envelope.query,
         action=envelope.action,
+        labels=dict(envelope.labels),
+        submit_once=envelope.submit_once,
     )
 
 

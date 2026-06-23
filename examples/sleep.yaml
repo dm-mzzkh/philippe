@@ -2,27 +2,31 @@
 name: sleep
 title: Записать сон
 table: sleeps
+
+context:
+  - {column: user_id,   from: user_id}
+  - {column: user_name, from: user_name}
+
 fields:
-  # Дата начала сна -> sleeps.sleep_date. Relative-day buttons; today by default.
+  # Дата начала сна -> sleeps.sleep_date. По умолчанию вчера (логируем утром).
   - key: sleep_date
     type: date
     label: Дата начала сна
-    default: today
+    default: yesterday
 
   # Начало сна -> sleeps.start_at (time, HH:MM).
   - key: start_at
     type: time
-    label: Начало сна (ЧЧ:ММ)
+    label: Лёг
 
   # Конец сна -> sleeps.end_at. If it's <= start (crossed midnight) the view
   # adds 24h when computing the duration.
   - key: end_at
     type: time
-    label: Конец сна (ЧЧ:ММ)
+    label: Встал
 
   # Комментарий по желанию -> sleeps.comment.
   - key: comment
     type: text
     label: Комментарий
     required: false
-# After the last field the bot shows the review (Cancel / Submit & fill again).
