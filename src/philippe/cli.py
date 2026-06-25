@@ -8,14 +8,48 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
-from .forms import FormError, load_form
+from .core import FormError, form_needs_db, load_form
+
+TOKEN_ENV = "PHILIPPE_BOT_TOKEN"
+DATABASE_ENV = "DATABASE_URL"
+ALLOWED_ENV = "PHILIPPE_ALLOWED_IDS"
 
 
-def _add_form_arg(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--form", required=True, type=Path, help="path to a form.yaml")
+def load_env(path: str | Path | None = None) -> None:
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:
+        return
+    dotenv_path = str(path) if path else find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path, override=False)
+
+
+def resolve_token(explicit: str | None) -> str:
+    token = explicit or os.environ.get(TOKEN_ENV)
+    if not token:
+        raise SystemExit(
+            f"No bot token. Pass --token or set {TOKEN_ENV} in the environment."
+        )
+    return token
+
+
+def resolve_database_url(explicit: str | None) -> str | None:
+    return explicit or os.environ.get(DATABASE_ENV)
+
+
+def resolve_allowed_ids(explicit: str | None) -> set[int] | None:
+    raw = explicit or os.environ.get(ALLOWED_ENV)
+    if not raw:
+        return None
+    try:
+        return {int(part) for part in raw.replace(" ", "").split(",") if part}
+    except ValueError:
+        raise SystemExit(f"{ALLOWED_ENV} must be comma-separated ids, e.g. 111,222")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_validate = sub.add_parser("validate", help="load and validate a form.yaml")
-    _add_form_arg(p_validate)
+    p_validate.add_argument("--form", required=True, type=Path, help="path to a form.yaml")
 
     p_run = sub.add_parser("run", help="run the Telegram bot")
     p_run.add_argument("--form", action="append", dest="forms", metavar="PATH",
@@ -32,12 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="offer every *.yaml in this directory")
     p_run.add_argument("--token", help="bot token (else $PHILIPPE_BOT_TOKEN / .env)")
     p_run.add_argument("--database-url", help="Postgres DSN (else $DATABASE_URL / .env); "
-                                              "without it records are only logged")
+                                               "without it records are only logged")
     p_run.add_argument("--allowed-ids", help="comma-separated Telegram ids allowed to use "
-                                             "the bot (else $PHILIPPE_ALLOWED_IDS; open if unset)")
+                                              "the bot (else $PHILIPPE_ALLOWED_IDS; open if unset)")
     p_run.add_argument("--env-file", type=Path, help="path to a .env file to load")
     p_run.add_argument("--log-level", default="INFO")
-
     return parser
 
 
@@ -50,13 +83,10 @@ def _load(form_path: Path):
 
 
 def _load_forms(paths, forms_dir: Path | None) -> dict:
-    """Load all requested forms into a {name: FormSpec} dict (name-keyed so the
-    /forms menu and form-selection can address them)."""
     files = [Path(p) for p in (paths or [])]
     if forms_dir is not None:
         if not forms_dir.is_dir():
-            print(f"error: --forms-dir not found or not a directory: {forms_dir}",
-                  file=sys.stderr)
+            print(f"error: --forms-dir not found or not a directory: {forms_dir}")
             raise SystemExit(2)
         found = sorted(forms_dir.glob("*.yaml"))
         if not found:
@@ -81,7 +111,6 @@ def _load_forms(paths, forms_dir: Path | None) -> dict:
 
 
 def _validate_actions(forms: dict) -> None:
-    """A query view's `action` must point at a loaded form and prefill real fields."""
     for form in forms.values():
         if form.action is None:
             continue
@@ -113,20 +142,13 @@ def cmd_validate(args) -> None:
 
 
 def cmd_run(args) -> None:
-    from .config import (
-        load_env,
-        resolve_allowed_ids,
-        resolve_database_url,
-        resolve_token,
-    )
-
     if args.env_file:
         load_env(args.env_file)
     logging.basicConfig(level=args.log_level.upper(),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     forms = _load_forms(args.forms, args.forms_dir)
     try:
-        from .telegram.bot import run_bot
+        from ._telegram import run_bot
     except ImportError as e:
         print(f"error: the Telegram adapter needs aiogram installed "
               f"(`uv sync --extra bot`): {e}", file=sys.stderr)
@@ -138,22 +160,14 @@ def cmd_run(args) -> None:
 
 
 def _build_db(forms, dsn: str | None):
-    """Return (sink, catalog). With a DSN → SQL sink + catalog; without → the
-    logging sink, warning about any forms that won't work until a DB is set."""
-    from .db.resolve import form_needs_db
+    from ._db import LoggingSink, SqlCatalog, SqlSink, connect
 
     if not dsn:
         needs_db = [f.name for f in forms if form_needs_db(f)]
         if needs_db:
             print(f"warning: forms {needs_db} need a database (dynamic options or "
-                  f"context columns) and will fail to start until DATABASE_URL is set",
-                  file=sys.stderr)
-        from .sink import LoggingSink
+                  f"context columns) and will fail to start until DATABASE_URL is set")
         return LoggingSink(), None
-
-    from .db.catalog import SqlCatalog
-    from .db.connection import connect
-    from .sink import SqlSink
 
     conn = connect(dsn)
     return SqlSink(conn), SqlCatalog(conn)
@@ -163,9 +177,7 @@ _COMMANDS = {"validate": cmd_validate, "run": cmd_run}
 
 
 def main(argv: list[str] | None = None) -> None:
-    from .config import load_env
-
-    load_env()  # pick up a .env from the current directory (or its parents)
+    load_env()
     args = build_parser().parse_args(argv)
     _COMMANDS[args.command](args)
 

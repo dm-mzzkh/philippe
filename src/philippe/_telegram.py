@@ -1,40 +1,45 @@
-"""Wire Telegram updates to the engine: /start, button taps, and messages."""
+"""Telegram driving adapter (aiogram)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from aiogram import Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
 )
 
-from ..context import resolve_context
-from ..db.resolve import resolve_form
-from ..dialog import Cancelled, Completed, Engine, Session, Show
-from ..dialog.engine import BACK
-from ..fields.base import Button, Input, InputKind, Prompt
-from ..fields.select import SelectSpec
-from .keyboards import build_keyboard
-from .render import message_to_input
+from .core import (
+    BACK,
+    CANCEL,
+    Cancelled,
+    Completed,
+    Engine,
+    FormSpec,
+    Input,
+    InputKind,
+    Prompt,
+    Session,
+    Show,
+    Button as CoreButton,
+    form_needs_db,
+    resolve_context,
+    resolve_form,
+)
 
 logger = logging.getLogger("philippe.telegram")
 
-# Payload of a "pick this form" button in the /forms menu (adapter-level, the
-# engine knows nothing about there being multiple forms).
 FORM_PREFIX = "__form__:"
-# Payload of an actionable query-view row button: tapping launches the view's
-# `action` form, prefilled from that row.
 ACTION_PREFIX = "__act__:"
 
-# A persistent reply keyboard with a single shortcut to the /forms menu, kept
-# above the user's keyboard at all times (set once on /start).
 FORMS_BUTTON = "📋 Forms"
 FORMS_REPLY_KB = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text=FORMS_BUTTON)]],
@@ -44,22 +49,51 @@ FORMS_REPLY_KB = ReplyKeyboardMarkup(
 )
 
 
-class Runner:
-    """Holds the form/engine/store and drives one engine step to a rendered reply."""
+def build_keyboard(prompt: Prompt) -> tuple[InlineKeyboardMarkup | None, list[str]]:
+    rows: list[list[InlineKeyboardButton]] = []
+    payloads: list[str] = []
+    for row in prompt.buttons:
+        krow = []
+        for button in row:
+            krow.append(
+                InlineKeyboardButton(text=button.label, callback_data=str(len(payloads)))
+            )
+            payloads.append(button.value)
+        if krow:
+            rows.append(krow)
+    markup = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+    return markup, payloads
 
-    def __init__(self, forms, sink, store, catalog=None, transcriber=None) -> None:
-        self.forms = forms  # dict: name -> FormSpec
+
+def message_to_input(message: Message) -> Input:
+    if message.photo:
+        return Input(attachment=Attachment(InputKind.PHOTO, message.photo[-1].file_id))
+    if message.document:
+        doc = message.document
+        return Input(attachment=Attachment(InputKind.DOCUMENT, doc.file_id, doc.file_name))
+    if message.audio:
+        return Input(attachment=Attachment(InputKind.AUDIO, message.audio.file_id,
+                                           message.audio.file_name))
+    if message.voice:
+        return Input(attachment=Attachment(InputKind.VOICE, message.voice.file_id))
+    return Input(text=message.text or "")
+
+
+# ponytail: dict[int, Session] beats a three-file Protocol-wrapped store
+from .core import Attachment, SelectSpec
+
+
+class Runner:
+    def __init__(self, forms, sink, catalog=None):
+        self.forms = forms
         self.sink = sink
-        self.store = store
         self.catalog = catalog
-        self.transcriber = transcriber
         self.engine = Engine()
-        self._buttons: dict[int, list[str]] = {}  # chat_id -> last payloads
-        self._actions: dict[int, tuple] = {}      # chat_id -> (QueryAction, rows)
+        self._sessions: dict[int, Session] = {}
+        self._buttons: dict[int, list[str]] = {}
+        self._actions: dict[int, tuple] = {}
 
     async def new_session(self, name: str) -> Session:
-        """Resolve the chosen form's dynamic options (off the event loop) and
-        start a session for it."""
         base = self.forms[name]
         has_dynamic = any(
             isinstance(s, SelectSpec) and s.is_dynamic for s in base.fields
@@ -67,15 +101,14 @@ class Runner:
         if has_dynamic:
             form = await asyncio.to_thread(resolve_form, base, self.catalog)
         else:
-            form = resolve_form(base, self.catalog)  # cheap copy, no DB
+            form = resolve_form(base, self.catalog)
         return Session(form=form)
-
-    # --- the /forms menu --------------------------------------------------
 
     def _menu_prompt(self) -> Prompt:
         if not self.forms:
             return Prompt("No forms are available.", [], {InputKind.BUTTON})
-        rows = [[Button(f.title, FORM_PREFIX + name)] for name, f in self.forms.items()]
+        rows = [[CoreButton(f.title, FORM_PREFIX + name)]
+                for name, f in self.forms.items()]
         return Prompt("Pick a form to fill:", rows, {InputKind.BUTTON})
 
     async def show_menu(self, message: Message, *, edit: bool = False) -> None:
@@ -110,8 +143,6 @@ class Runner:
         await self.resolve(message, session, outcome, edit=edit)
 
     async def _run_query(self, message: Message, form, *, edit: bool) -> None:
-        """Run a `kind: query` view and show its rows as a plain text list.
-        Each row's `label` column becomes one line."""
         if self.catalog is None:
             await message.answer("⚠️ This view needs a database.")
             return
@@ -126,11 +157,11 @@ class Runner:
         if not rows:
             self._buttons.pop(chat_id, None)
             self._actions.pop(chat_id, None)
-            await self._render_text(message, f"{form.title}\n\n— всё сделано 🎉",
-                                    markup=None, edit=edit)
+            text = f"{form.title}\n\n— всё сделано 🎉"
+            await self._render_text(message, text, markup=None, edit=edit)
             return
 
-        if form.action is None:  # plain read-only list
+        if form.action is None:
             self._buttons.pop(chat_id, None)
             self._actions.pop(chat_id, None)
             lines = "\n".join(f"• {row.get('label', row)}" for row in rows)
@@ -138,10 +169,9 @@ class Runner:
                                     markup=None, edit=edit)
             return
 
-        # actionable view: one button per row → tap launches form.action
         prompt = Prompt(
             form.title,
-            [[Button(str(row.get("label", row)), ACTION_PREFIX + str(i))]
+            [[CoreButton(str(row.get("label", row)), ACTION_PREFIX + str(i))]
              for i, row in enumerate(rows)],
             {InputKind.BUTTON},
         )
@@ -160,7 +190,6 @@ class Runner:
             await message.answer(text, reply_markup=markup)
 
     def action_prefill(self, chat_id: int, row_index: int) -> tuple | None:
-        """Resolve a tapped query-row → (target form name, prefill dict)."""
         action, rows = self._actions.get(chat_id, (None, None))
         if action is None or not (0 <= row_index < len(rows)):
             return None
@@ -169,7 +198,6 @@ class Runner:
         return action.form, prefill
 
     def _context(self, message: Message, form) -> dict:
-        """Resolve the form's context columns from the Telegram message."""
         if not form.context:
             return {}
         user = message.from_user
@@ -181,21 +209,16 @@ class Runner:
         }
         return resolve_context(form.context, available)
 
-    async def _send(self, message: Message, outcome: Show) -> None:
-        """Reply with a brand-new message (after a text input or /start)."""
+    async def _show(self, message: Message, outcome: Show, *, edit: bool) -> None:
         markup, payloads = build_keyboard(outcome.prompt)
         self._buttons[message.chat.id] = payloads
-        await message.answer(outcome.prompt.text, reply_markup=markup)
-
-    async def _edit(self, message: Message, outcome: Show) -> None:
-        """Update the existing message in place (after a button tap), so taps
-        like picking a period then a ×N don't re-send the message."""
-        markup, payloads = build_keyboard(outcome.prompt)
-        self._buttons[message.chat.id] = payloads
-        try:
-            await message.edit_text(outcome.prompt.text, reply_markup=markup)
-        except TelegramBadRequest:
-            pass  # identical content (e.g. re-tapping the already-selected button)
+        if edit:
+            try:
+                await message.edit_text(outcome.prompt.text, reply_markup=markup)
+            except TelegramBadRequest:
+                pass
+        else:
+            await message.answer(outcome.prompt.text, reply_markup=markup)
 
     async def _strip_keyboard(self, message: Message) -> None:
         try:
@@ -209,21 +232,18 @@ class Runner:
         chat_id = message.chat.id
         while True:
             if isinstance(outcome, Show):
-                self.store.put(chat_id, session)
-                if edit:
-                    await self._edit(message, outcome)
-                else:
-                    await self._send(message, outcome)
+                self._sessions[chat_id] = session
+                await self._show(message, outcome, edit=edit)
                 return
             if isinstance(outcome, Completed):
                 record = {**outcome.record, **self._context(message, session.form)}
                 try:
                     await asyncio.to_thread(self.sink.save, session.form, record)
-                except Exception as e:  # keep the review so the user can retry/cancel
+                except Exception as e:
                     logger.exception("save failed for form '%s'", session.form.name)
                     await message.answer(f"⚠️ Could not save: {e}")
                     return
-                if edit:  # drop the review keyboard now that it's committed
+                if edit:
                     await self._strip_keyboard(message)
                     edit = False
                 lines = ["✔ Saved:"] + [
@@ -233,14 +253,12 @@ class Runner:
                 if outcome.restart:
                     outcome = self.engine.restart(session)
                     continue
-                self.store.drop(chat_id)
+                self._sessions.pop(chat_id, None)
                 self._actions.pop(chat_id, None)
                 await self.show_menu(message, edit=edit)
                 return
             if isinstance(outcome, Cancelled):
-                # Cancel, or Back on the first field → drop the form and return
-                # to the /forms menu (editing the message in place if from a tap).
-                self.store.drop(chat_id)
+                self._sessions.pop(chat_id, None)
                 self._actions.pop(chat_id, None)
                 await self.show_menu(message, edit=edit)
                 return
@@ -259,13 +277,12 @@ class Runner:
 
 def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dispatcher:
     router = Router()
-    if allowed_ids:  # whitelist: ignore everyone else
+    if allowed_ids:
         router.message.filter(F.from_user.id.in_(allowed_ids))
         router.callback_query.filter(F.from_user.id.in_(allowed_ids))
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
-        # Pin the persistent "📋 Forms" button above the keyboard, then show the menu.
         await message.answer("Кнопка «📋 Forms» всегда под рукой 👇",
                              reply_markup=FORMS_REPLY_KB)
         await runner.show_menu(message)
@@ -282,10 +299,10 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
         value = runner.button_value(message.chat.id, callback.data or "")
         if value is None:
             return
-        if value.startswith(FORM_PREFIX):  # picked a form from the menu
+        if value.startswith(FORM_PREFIX):
             await runner.start_form(message, value[len(FORM_PREFIX):], edit=True)
             return
-        if value.startswith(ACTION_PREFIX):  # tapped a row in an actionable view
+        if value.startswith(ACTION_PREFIX):
             resolved = runner.action_prefill(
                 message.chat.id, int(value[len(ACTION_PREFIX):])
             )
@@ -293,22 +310,50 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
                 form_name, prefill = resolved
                 await runner.start_form(message, form_name, edit=True, prefill=prefill)
             return
-        session = runner.store.get(message.chat.id)
+        session = runner._sessions.get(message.chat.id)
         if session is None:
             await message.answer("Session expired — send /forms.")
             return
         inp = Input(back=True) if value == BACK else Input(button=value)
-        await runner.drive(message, session, inp, edit=True)  # update in place
+        await runner.drive(message, session, inp, edit=True)
 
     @router.message()
     async def on_message(message: Message) -> None:
-        session = runner.store.get(message.chat.id)
+        session = runner._sessions.get(message.chat.id)
         if session is None:
             await message.answer("Send /forms to pick a form.")
             return
-        inp = message_to_input(message, runner.transcriber)
+        inp = message_to_input(message)
         await runner.drive(message, session, inp)
 
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     return dispatcher
+
+
+def run_bot(
+    forms: dict[str, FormSpec],
+    token: str,
+    sink,
+    catalog=None,
+    allowed_ids: set[int] | None = None,
+) -> None:
+    runner = Runner(forms, sink, catalog=catalog)
+    dispatcher = build_dispatcher(runner, allowed_ids=allowed_ids)
+    bot = Bot(token)
+
+    async def _main() -> None:
+        from aiogram.types import BotCommand
+        logger.info("starting bot with forms: %s%s", ", ".join(forms),
+                    f" (whitelist: {len(allowed_ids)} ids)" if allowed_ids else "")
+        try:
+            await bot.set_my_commands([
+                BotCommand(command="forms", description="List forms to fill"),
+                BotCommand(command="start", description="List forms to fill"),
+            ])
+            await bot.delete_webhook(drop_pending_updates=True)
+            await dispatcher.start_polling(bot)
+        finally:
+            await bot.session.close()
+
+    asyncio.run(_main())

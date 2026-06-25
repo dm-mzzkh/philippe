@@ -5,16 +5,26 @@ import datetime as dt
 
 import pytest
 
-from philippe.context import resolve_context
-from philippe.db.catalog import SqlCatalog
-from philippe.db.resolve import form_needs_db, resolve_form
-from philippe.dialog import Engine, Session, Show
-from philippe.dialog.engine import SUBMIT
-from philippe.fields import get_field_type
-from philippe.fields.base import Input
-from philippe.fields.select import OptionSource, SelectSpec
-from philippe.forms import FormError, load_form
-from philippe.forms.models import ContextColumn, FieldSpec, FormSpec
+from philippe.core import (
+    ContextColumn,
+    Engine,
+    FieldSpec,
+    FormError,
+    FormSpec,
+    Input,
+    OptionSource,
+    Recurrence,
+    SelectSpec,
+    Session,
+    Show,
+    SUBMIT,
+    form_needs_db,
+    get_field_type,
+    load_form,
+    resolve_context,
+    resolve_form,
+)
+from philippe._db import SqlCatalog, SqlSink
 
 
 # --- fake DB-API connection ------------------------------------------------
@@ -27,8 +37,8 @@ class _Col:
 class FakeCursor:
     def __init__(self, rows):
         self._rows = rows
-        self.executed = []  # list of (sql, params)
-        self.description = None  # set by query() tests
+        self.executed = []
+        self.description = None
 
     def __enter__(self):
         return self
@@ -63,8 +73,6 @@ class FakeConn:
 
 def test_repeat_maps_to_period_and_every():
     spec = get_field_type("repeat").spec_model(key="schedule", type="repeat", label="x")
-    from philippe.fields.repeat import Recurrence
-
     ft = get_field_type("repeat")
     assert ft.columns(spec) == ["period", "every"]
     assert ft.to_columns(spec, Recurrence("week", 3)) == {"period": "week", "every": 3}
@@ -93,8 +101,8 @@ def test_engine_builds_column_keyed_record(tmp_path):
     e.start(s)
     e.step(s, Input(text="Vacuum"))
     e.step(s, Input(button="week"))
-    e.step(s, Input(button="3"))            # repeat done
-    out = e.step(s, Input(button="yes"))    # bool → review
+    e.step(s, Input(button="3"))
+    out = e.step(s, Input(button="yes"))
     done = e.step(s, Input(button=SUBMIT))
     assert done.record == {"title": "Vacuum", "period": "week", "every": 3, "active": True}
 
@@ -102,9 +110,6 @@ def test_engine_builds_column_keyed_record(tmp_path):
 # --- SQL sink --------------------------------------------------------------
 
 def test_sql_sink_casts_each_value_to_its_column_type():
-    from philippe.sink import SqlSink
-
-    # fetchall() answers the information_schema introspection query
     conn = FakeConn(rows=[("task_id", "int4"), ("done_at", "date"),
                           ("comment", "text")])
     form = FormSpec(name="log", title="L", table="logs", fields=[])
@@ -122,9 +127,6 @@ def test_sql_sink_casts_each_value_to_its_column_type():
 
 
 def test_sql_sink_casts_enum_column():
-    """The point of casting: a Python str into an ENUM column."""
-    from philippe.sink import SqlSink
-
     conn = FakeConn(rows=[("title", "text"), ("period", "task_period"),
                           ("every", "int4")])
     form = FormSpec(name="task", title="T", table="tasks", fields=[])
@@ -137,8 +139,6 @@ def test_sql_sink_casts_enum_column():
 
 
 def test_sql_sink_rolls_back_on_error():
-    from philippe.sink import SqlSink
-
     class FailingInsertCursor(FakeCursor):
         def execute(self, sql, params=None):
             super().execute(sql, params)
@@ -229,7 +229,6 @@ def test_resolve_form_fills_dynamic_select_choices(tmp_path):
     resolved = resolve_form(form, FakeCatalog([("dishes", 1), ("floor", 2)]))
     select = resolved.fields[0]
     assert select.choices() == [("dishes", 1), ("floor", 2)]
-    # the original form is untouched (per-dialog copy)
     assert form.fields[0]._choices is None
 
 
@@ -281,7 +280,7 @@ def test_action_rejected_on_data_entry_form(tmp_path):
 
 
 def test_resolve_allowed_ids():
-    from philippe.config import resolve_allowed_ids
+    from philippe.cli import resolve_allowed_ids
     assert resolve_allowed_ids("111, 222") == {111, 222}
     assert resolve_allowed_ids("") is None
     with pytest.raises(SystemExit):
@@ -326,18 +325,16 @@ def test_dynamic_select_shows_label_stores_value(tmp_path):
     e = Engine()
     s = Session(form=form)
     out = e.start(s)
-    # buttons show titles, payloads are the ids
     assert out.prompt.buttons[0][0].label == "dishes"
     assert out.prompt.buttons[0][0].value == "1"
 
-    e.step(s, Input(button="2"))            # pick "floor" (id 2)
-    e.step(s, Input(button="rel:0"))        # date: today
-    out = e.step(s, Input(button="__skip__"))  # skip comment → review
-    # review button shows the human label, not the id
+    e.step(s, Input(button="2"))
+    e.step(s, Input(button="rel:0"))
+    out = e.step(s, Input(button="__skip__"))
     assert out.prompt.buttons[0][0].label.startswith("What did you do?: floor")
 
     done = e.step(s, Input(button=SUBMIT))
-    assert done.record["task_id"] == 2      # stored value is the id
+    assert done.record["task_id"] == 2
     assert done.record["done_at"] == dt.date.today()
     assert done.record["comment"] is None
 
@@ -359,7 +356,7 @@ def test_resolve_context_unknown_source_raises():
 
 # --- helpers ---------------------------------------------------------------
 
-def _write(tmp_path, body):
+def _write(tmp_path, body: str):
     import textwrap
     p = tmp_path / "form.yaml"
     p.write_text(textwrap.dedent(body), encoding="utf-8")

@@ -46,6 +46,8 @@ CREATE TABLE sleeps (
   start_at   TIME        NOT NULL,
   end_at     TIME        NOT NULL,
   comment    TEXT,
+  user_id    BIGINT,            -- Telegram IDs exceed 2^31 -> must be BIGINT, not INTEGER
+  user_name  TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

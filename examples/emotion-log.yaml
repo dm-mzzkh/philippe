@@ -1,0 +1,12 @@
+name: emotion-log
+title: Дневник эмоций
+kind: query
+query: |
+  SELECT
+    to_char(created_at, 'DD.MM HH24:MI') || ' · ' || emotion
+      || ' ' || intensity || '/10' || E'\n'
+      || situation || E'\n'
+      || thought AS label
+  FROM emotions
+  ORDER BY created_at DESC
+  LIMIT 20
