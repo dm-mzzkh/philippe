@@ -1,0 +1,56 @@
+# Rate a food place — uploads photos to Hydrus Network, stores the content
+# hashes on the review row.
+#
+# Photos are stored in Hydrus (requires HYDRUS_URL + HYDRUS_KEY in .env).
+# Tags from the field spec are applied to each uploaded file.
+#
+# Needs the place_reviews table:
+#
+#   CREATE TABLE place_reviews (
+#     id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+#     name       TEXT NOT NULL,
+#     address    TEXT,
+#     rating     INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 10),
+#     review     TEXT,
+#     photos     TEXT[],              -- Hydrus content hashes (SHA-256)
+#     user_id    BIGINT,
+#     user_name  TEXT,
+#     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+#   );
+name: place
+title: Оценка места еды
+table: place_reviews
+
+context:
+  - {column: user_id,   from: user_id}
+  - {column: user_name, from: user_name}
+
+fields:
+  - key: photos
+    type: photos
+    label: Фото еды
+    required: false
+    tags:
+      - "food"
+      - name
+
+  - key: name
+    type: text
+    label: Название места
+
+  - key: address
+    type: text
+    label: Адрес
+    required: false
+
+  - key: rating
+    type: number
+    label: Оценка (1–10)
+    min: 1
+    max: 10
+    presets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  - key: review
+    type: text
+    label: Отзыв
+    required: false

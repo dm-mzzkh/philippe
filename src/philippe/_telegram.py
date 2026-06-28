@@ -9,9 +9,11 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -31,11 +33,14 @@ from .core import (
     Show,
     Button as CoreButton,
     form_needs_db,
+    get_field_type,
     resolve_context,
     resolve_form,
 )
+from ._hydrus import HydrusClient
 
 logger = logging.getLogger("philippe.telegram")
+
 
 FORM_PREFIX = "__form__:"
 ACTION_PREFIX = "__act__:"
@@ -84,10 +89,11 @@ from .core import Attachment, SelectSpec
 
 
 class Runner:
-    def __init__(self, forms, sink, catalog=None):
+    def __init__(self, forms, sink, catalog=None, hydrus_client=None):
         self.forms = forms
         self.sink = sink
         self.catalog = catalog
+        self.hydrus_client = hydrus_client
         self.engine = Engine()
         self._sessions: dict[int, Session] = {}
         self._buttons: dict[int, list[str]] = {}
@@ -189,6 +195,32 @@ class Runner:
         else:
             await message.answer(text, reply_markup=markup)
 
+    async def show_row_images(self, message: Message, row_index: int) -> None:
+        """Send the photos a query row references (action.show_images column)."""
+        if self.hydrus_client is None:
+            await message.answer("⚠️ Hydrus is not configured.")
+            return
+        action, rows = self._actions.get(message.chat.id, (None, None))
+        if action is None or not (0 <= row_index < len(rows)):
+            return
+        hashes = rows[row_index].get(action.show_images) or []
+        if not hashes:
+            await message.answer("Нет фото 📭")
+            return
+        # ponytail: Telegram media groups cap at 10; extra photos dropped — rare per review.
+        hashes = hashes[:10]
+
+        def _fetch():
+            return [self.hydrus_client.thumbnail(h) for h in hashes]
+
+        blobs = await asyncio.to_thread(_fetch)
+        media = [InputMediaPhoto(media=BufferedInputFile(b, f"{i}.jpg"))
+                 for i, b in enumerate(blobs)]
+        if len(media) == 1:
+            await message.answer_photo(media[0].media)
+        else:
+            await message.bot.send_media_group(message.chat.id, media=media)
+
     def action_prefill(self, chat_id: int, row_index: int) -> tuple | None:
         action, rows = self._actions.get(chat_id, (None, None))
         if action is None or not (0 <= row_index < len(rows)):
@@ -238,6 +270,7 @@ class Runner:
             if isinstance(outcome, Completed):
                 record = {**outcome.record, **self._context(message, session.form)}
                 try:
+                    await self._persist_images(message, session, record)
                     await asyncio.to_thread(self.sink.save, session.form, record)
                 except Exception as e:
                     logger.exception("save failed for form '%s'", session.form.name)
@@ -262,6 +295,29 @@ class Runner:
                 self._actions.pop(chat_id, None)
                 await self.show_menu(message, edit=edit)
                 return
+
+    async def _persist_images(self, message: Message, session: Session, record: dict) -> None:
+        """Download each photos-field's blobs, upload to Hydrus, replace file_ids
+        with content hashes, and apply tags from the field spec."""
+        if self.hydrus_client is None:
+            return
+        for spec in session.form.fields:
+            if spec.type != "photos":
+                continue
+            col = get_field_type(spec.type).column(spec)
+            file_ids = record.get(col) or []
+            if not file_ids:
+                continue
+            hashes = []
+            for fid in file_ids:
+                data = (await message.bot.download(fid)).read()
+                h = await asyncio.to_thread(self.hydrus_client.upload, data)
+                hashes.append(h)
+            if spec.tags:
+                resolved = [str(session.answers.get(t, t)) for t in spec.tags]
+                for h in hashes:
+                    await asyncio.to_thread(self.hydrus_client.tag, h, resolved)
+            record[col] = hashes
 
     async def drive(
         self, message: Message, session: Session, inp: Input, *, edit: bool = False
@@ -303,9 +359,12 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
             await runner.start_form(message, value[len(FORM_PREFIX):], edit=True)
             return
         if value.startswith(ACTION_PREFIX):
-            resolved = runner.action_prefill(
-                message.chat.id, int(value[len(ACTION_PREFIX):])
-            )
+            idx = int(value[len(ACTION_PREFIX):])
+            action, _ = runner._actions.get(message.chat.id, (None, None))
+            if action is not None and action.show_images:
+                await runner.show_row_images(message, idx)
+                return
+            resolved = runner.action_prefill(message.chat.id, idx)
             if resolved is not None:
                 form_name, prefill = resolved
                 await runner.start_form(message, form_name, edit=True, prefill=prefill)
@@ -336,9 +395,10 @@ def run_bot(
     token: str,
     sink,
     catalog=None,
+    hydrus_client=None,
     allowed_ids: set[int] | None = None,
 ) -> None:
-    runner = Runner(forms, sink, catalog=catalog)
+    runner = Runner(forms, sink, catalog=catalog, hydrus_client=hydrus_client)
     dispatcher = build_dispatcher(runner, allowed_ids=allowed_ids)
     bot = Bot(token)
 

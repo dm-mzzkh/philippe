@@ -49,6 +49,9 @@ class FakeCursor:
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
 
+    def executemany(self, sql, seq_of_params):
+        self.executed.append((sql, list(seq_of_params)))
+
     def fetchall(self):
         return self._rows
 
@@ -266,6 +269,29 @@ def test_query_form_with_action_loads(tmp_path):
     """))
     assert form.action.form == "log"
     assert form.action.prefill == {"task": "value"}
+
+
+def test_query_form_with_show_images_action_loads(tmp_path):
+    form = load_form(_write(tmp_path, """
+        name: reviews
+        title: Reviews
+        kind: query
+        action: {show_images: photos}
+        query: SELECT id AS value, name AS label, photos FROM place_reviews
+    """))
+    assert form.action.show_images == "photos"
+    assert form.action.form is None
+
+
+def test_action_needs_exactly_one_of_form_or_show_images(tmp_path):
+    with pytest.raises(FormError, match="exactly one of 'form' or 'show_images'"):
+        load_form(_write(tmp_path, """
+            name: reviews
+            title: Reviews
+            kind: query
+            action: {form: log, show_images: photos}
+            query: SELECT id AS value, name AS label FROM place_reviews
+        """))
 
 
 def test_action_rejected_on_data_entry_form(tmp_path):

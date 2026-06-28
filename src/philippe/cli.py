@@ -17,6 +17,8 @@ from .core import FormError, form_needs_db, load_form
 TOKEN_ENV = "PHILIPPE_BOT_TOKEN"
 DATABASE_ENV = "DATABASE_URL"
 ALLOWED_ENV = "PHILIPPE_ALLOWED_IDS"
+HYDRUS_URL_ENV = "HYDRUS_URL"
+HYDRUS_KEY_ENV = "HYDRUS_KEY"
 
 
 def load_env(path: str | Path | None = None) -> None:
@@ -50,6 +52,19 @@ def resolve_allowed_ids(explicit: str | None) -> set[int] | None:
         return {int(part) for part in raw.replace(" ", "").split(",") if part}
     except ValueError:
         raise SystemExit(f"{ALLOWED_ENV} must be comma-separated ids, e.g. 111,222")
+
+
+def resolve_hydrus() -> tuple[str, str] | None:
+    url = os.environ.get(HYDRUS_URL_ENV)
+    key = os.environ.get(HYDRUS_KEY_ENV)
+    if url and key:
+        return url, key
+    if url or key:
+        raise SystemExit(
+            f"Both {HYDRUS_URL_ENV} and {HYDRUS_KEY_ENV} must be set "
+            f"(or neither)."
+        )
+    return None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,6 +129,8 @@ def _validate_actions(forms: dict) -> None:
     for form in forms.values():
         if form.action is None:
             continue
+        if form.action.form is None:  # ponytail: show_images action, no form target
+            continue
         target = forms.get(form.action.form)
         if target is None:
             print(f"error: form '{form.name}': action.form '{form.action.form}' "
@@ -155,7 +172,9 @@ def cmd_run(args) -> None:
         raise SystemExit(1)
 
     sink, catalog = _build_db(forms.values(), resolve_database_url(args.database_url))
+    hydrus_client = _build_hydrus()
     run_bot(forms, resolve_token(args.token), sink=sink, catalog=catalog,
+            hydrus_client=hydrus_client,
             allowed_ids=resolve_allowed_ids(args.allowed_ids))
 
 
@@ -171,6 +190,15 @@ def _build_db(forms, dsn: str | None):
 
     conn = connect(dsn)
     return SqlSink(conn), SqlCatalog(conn)
+
+
+def _build_hydrus():
+    creds = resolve_hydrus()
+    if creds is None:
+        return None
+    from ._hydrus import HydrusClient
+    url, key = creds
+    return HydrusClient(url, key)
 
 
 _COMMANDS = {"validate": cmd_validate, "run": cmd_run}

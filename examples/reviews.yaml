@@ -1,0 +1,24 @@
+# Browse food-place reviews (the rows created by place.yaml). Each review is a
+# button; tapping one sends its photos back into the chat — the bot downloads
+# them from Hydrus Network by their content hashes.
+#
+# Needs the `place_reviews` table (see place.yaml) and Hydrus (HYDRUS_URL + KEY).
+name: reviews
+title: Рецензии на места
+kind: query
+
+action:
+  show_images: photos      # tap a row → send the hashes in its `photos` column
+
+query: |
+  SELECT
+    id AS value,
+    name || ' — ' || rating || '/10'
+      || CASE WHEN review IS NOT NULL AND review <> '' THEN ' · ' || review ELSE '' END
+      || CASE WHEN photos IS NOT NULL AND cardinality(photos) > 0
+              THEN ' 📷' || cardinality(photos) ELSE '' END
+      AS label,
+    photos
+  FROM place_reviews
+  ORDER BY created_at DESC
+  LIMIT 20;

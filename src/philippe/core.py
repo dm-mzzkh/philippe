@@ -46,6 +46,7 @@ class FieldSpec(BaseModel):
     help: str | None = None
     column: str | None = None
     show_if: dict[str, Any] | None = None
+    tags: list[str] = []
 
 
 class NumberSpec(FieldSpec):
@@ -122,8 +123,17 @@ class RepeatSpec(FieldSpec):
 class QueryAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    form: str
+    form: str | None = None
     prefill: dict[str, str] = {}
+    # Instead of starting a form, send the photos a row references: the named
+    # column must hold a TEXT[] of image hashes (see the `photos` field type).
+    show_images: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_action(self) -> "QueryAction":
+        if bool(self.form) == bool(self.show_images):
+            raise ValueError("action needs exactly one of 'form' or 'show_images'")
+        return self
 
 
 class ContextColumn(BaseModel):
@@ -586,6 +596,49 @@ class Audio(_AttachmentField):
     noun = "an audio message"
 
 
+PHOTOS_DONE = "__photos_done__"
+
+
+class Photos(FieldType):
+    """Collect many photos in one step; finish with a Done button.
+
+    The dialog only accumulates Telegram file_ids (engine stays I/O-free). At
+    submit the adapter downloads, hashes, and stores each blob in the `images`
+    table, then swaps the file_ids for content hashes — so the field's column
+    holds a TEXT[] of image hashes.
+    """
+
+    spec_model = FieldSpec
+    _accept = {InputKind.PHOTO, InputKind.DOCUMENT}
+
+    def _prompt(self, text: str) -> Prompt:
+        return Prompt(text, [[Button("✅ Готово", PHOTOS_DONE)]],
+                      self._accept | {InputKind.BUTTON})
+
+    def start(self, spec, fstate):
+        fstate["items"] = []
+        return self._prompt(f"{spec.label}: пришли фото (можно несколько), "
+                            "затем нажми «Готово».")
+
+    def handle(self, spec, fstate, inp):
+        items = fstate.setdefault("items", [])
+        att = inp.attachment
+        if att is not None and att.kind in self._accept:
+            items.append(att)
+            return Ask(self._prompt(f"📷 {len(items)} добавлено. Ещё или «Готово»."))
+        if inp.button == PHOTOS_DONE:
+            if items or not spec.required:
+                return Done(list(items))
+            return Ask(self._prompt("Пришли хотя бы одно фото."))
+        return Ask(self._prompt("Пришли фото или нажми «Готово»."))
+
+    def render(self, spec, value: list[Attachment]):
+        return f"{len(value)} фото" if value else "—"
+
+    def to_columns(self, spec, value: list[Attachment]):
+        return {self.column(spec): [att.file_id for att in value]}
+
+
 # ponytail: plain dict beats a decorator + auto-import registry
 FIELD_TYPES: dict[str, FieldType] = {
     "title": Text(),
@@ -599,6 +652,7 @@ FIELD_TYPES: dict[str, FieldType] = {
     "photo": Photo(),
     "media": Media(),
     "audio": Audio(),
+    "photos": Photos(),
 }
 
 

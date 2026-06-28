@@ -47,6 +47,10 @@ class SqlCatalog:
             rows = cur.fetchall()
         return [(str(label), value) for label, value in rows]
 
+    def images(self, hashes: list[str]) -> list[tuple[bytes, str | None]]:
+        """DEPRECATED — use HydrusClient.download() instead."""
+        raise NotImplementedError("image storage moved to Hydrus Network")
+
     def query(self, sql: str) -> list[dict[str, Any]]:
         with self._conn.cursor() as cur:
             cur.execute(sql)
@@ -115,4 +119,4 @@ class LoggingSink:
     def save(self, form: FormSpec, record: dict[str, Any]) -> None:
         target = form.table or form.name
         logger.info("record for %s: %s", target, json.dumps(record, default=str,
-                                                             ensure_ascii=False))
+                                                              ensure_ascii=False))

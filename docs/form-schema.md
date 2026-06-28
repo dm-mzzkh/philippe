@@ -35,6 +35,10 @@
    * help - extra hint text under the question
    * column - (optional) DB column to write to; defaults to `key`. Use it when the
      column name differs from the answer key (e.g. select `task` → `task_id`)
+   * tags - (optional, attachment fields) list of Hydrus tags to apply to
+     each uploaded file. If an entry matches a field `key`, its resolved value
+     is substituted (e.g. `tags: ["food", name]` tags the file with the literal
+     "food" and the value of the `name` field).
 
 * context (top-level, optional) — columns the bot fills from the message, not asked
    * a list of `{column, from}` entries
@@ -127,6 +131,10 @@
       * photo - a photo
       * media - a document / file
       * audio - an audio message
+      * photos - collect multiple photos in one field, tap "Готово" to finish
+        * uploaded to Hydrus Network on submit; content hash stored in the column
+        * the `tags` field key (above) lets you attach Hydrus tags to each upload
+        * `show_images` action in query forms re-downloads from Hydrus by hash
 
 * on_submit — the review step (not declared as a field, runs automatically last)
    * shows everything entered, one button per field
