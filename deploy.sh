@@ -14,7 +14,8 @@ cd "$(dirname "$0")"
 
 # tar over ssh — rsync isn't installed in the editing container. Removed files
 # aren't pruned on the remote (except examples, wiped below); rare and harmless.
-ship() { tar -czf - "$@" | ssh "$HOST" "mkdir -p $DIR && tar -xzf - -C $DIR"; }
+# COPYFILE_DISABLE keeps macOS AppleDouble junk (._*) out of the stream.
+ship() { COPYFILE_DISABLE=1 tar --exclude='._*' -czf - "$@" | ssh "$HOST" "mkdir -p $DIR && tar -xzf - -C $DIR"; }
 
 if [ "${1:-}" = forms ]; then
   ssh "$HOST" "rm -rf $DIR/examples"          # so deleted forms vanish too

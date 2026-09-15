@@ -411,6 +411,16 @@ class Runner:
 HOUR_ASK_MINUTE = 15  # ask at :15, so the hour itself starts uninterrupted
 
 
+def _local_now() -> datetime:
+    """Wall-clock time for the hourly check-in. PHILIPPE_TZ (IANA name) wins;
+    containers have no local tz, so without it we'd nag in UTC."""
+    name = os.environ.get("PHILIPPE_TZ")
+    if name:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(name))
+    return datetime.now().astimezone()
+
+
 async def hour_nag_loop(runner: Runner, bot: Bot, chat_id: int) -> None:
     """Every hour at :15 ask the target chat what it did the hour before.
 
@@ -420,7 +430,7 @@ async def hour_nag_loop(runner: Runner, bot: Bot, chat_id: int) -> None:
     logger.info("hourly check-in nagging chat %s", chat_id)
     asked_for = None
     while True:
-        now = datetime.now(timezone.utc).astimezone()
+        now = _local_now()
         anchor = now.replace(minute=0, second=0, microsecond=0)
         if asked_for is None or asked_for < anchor:
             if now.minute >= HOUR_ASK_MINUTE:
@@ -531,6 +541,13 @@ def run_bot(
                 BotCommand(command="forms", description="List forms to fill"),
                 BotCommand(command="start", description="List forms to fill"),
             ])
+            announce_to = hour_chat or (sorted(allowed_ids)[0] if allowed_ids else None)
+            if announce_to:
+                try:
+                    await bot.send_message(announce_to,
+                                           f"🤖 Бот поднялся на: {runner.host}")
+                except Exception:
+                    logger.exception("startup announce failed")
             await bot.delete_webhook(drop_pending_updates=True)
             await dispatcher.start_polling(bot)
         finally:
