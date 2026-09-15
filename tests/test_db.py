@@ -416,3 +416,20 @@ fields:
     label: Any comment?
     required: false
 """
+
+# --- sink.insert (hourly check-in path) -------------------------------------
+
+def test_sql_sink_insert_casts_and_commits_without_formspec():
+    conn = FakeConn(rows=[("period", "timestamptz"), ("hash", "text")])
+    SqlSink(conn).insert("hour_photos", {"period": dt.datetime(2026, 9, 16, 1),
+                                         "hash": "abc"})
+    insert_sql, params = conn.cursor_obj.executed[1]
+    assert insert_sql == ('INSERT INTO "hour_photos" ("period", "hash") '
+                          'VALUES (%s::timestamptz, %s::text)')
+    assert params == [dt.datetime(2026, 9, 16, 1), "abc"]
+    assert conn.commits == 1
+
+
+def test_sql_sink_insert_rejects_empty_record():
+    with pytest.raises(ValueError):
+        SqlSink(FakeConn(rows=[])).insert("hour_photos", {})

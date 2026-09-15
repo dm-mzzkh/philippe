@@ -159,6 +159,7 @@ class FormSpec:
     action: QueryAction | None = None
     labels: dict[str, str] = field(default_factory=dict)
     submit_once: bool = False
+    auto_submit: bool = False
 
     def field_index(self, key: str) -> int:
         for i, spec in enumerate(self.fields):
@@ -725,7 +726,7 @@ class Engine:
         ):
             session.cursor += 1
         if session.cursor >= len(fields):
-            return self._show_review(session)
+            return self._show_review(session, auto=session.form.auto_submit)
         return self._ask_current(session)
 
     def restart(self, session: Session) -> Outcome:
@@ -791,7 +792,16 @@ class Engine:
         prompt.buttons = prompt.buttons + [row]
         return prompt
 
-    def _show_review(self, session: Session) -> Outcome:
+    def _show_review(self, session: Session, auto: bool = True) -> Outcome:
+        # auto_submit: when every visible field already has an answer (prefill
+        # or user), skip the review screen and save silently. ponytail: MVP
+        # hourly check-in; per-path toggles only if another form needs them.
+        if session.form.auto_submit and all(
+            spec.key in session.answers
+            for spec in session.form.fields
+            if self._visible(spec, session.answers)
+        ):
+            return self._build_completed(session)
         session.mode = "review"
         buttons = []
         for spec in session.form.fields:
@@ -888,6 +898,7 @@ class _Envelope(BaseModel):
     fields: list[dict[str, Any]] = []
     labels: dict[str, str] = {}
     submit_once: bool = False
+    auto_submit: bool = False
 
 
 def load_form(path: str | Path) -> FormSpec:
@@ -931,6 +942,7 @@ def load_form(path: str | Path) -> FormSpec:
         action=envelope.action,
         labels=dict(envelope.labels),
         submit_once=envelope.submit_once,
+        auto_submit=envelope.auto_submit,
     )
 
 

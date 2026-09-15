@@ -1,0 +1,23 @@
+# MVP hourly check-in. The bot's scheduler asks every hour at :00 —
+# "Что делал 01:00–02:00?" — and the answer is a single REPLY to that
+# particular message. `period` is prefilled by the scheduler with the start
+# of the hour as a real datetime; `note` is the reply text. No review, no
+# restart: one reply = one row in hour_log. Missed hours stay unanswered.
+name: hour
+title: Что делал этот час?
+table: hour_log
+auto_submit: true
+submit_once: true
+
+context:
+  - column: chat_id
+    from: chat_id
+
+fields:
+  - key: period
+    type: text
+    label: Period
+    column: period
+  - key: note
+    type: text
+    label: Что делал

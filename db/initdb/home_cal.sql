@@ -10,6 +10,8 @@ BEGIN;
 
 -- Drop dependents first (logs references tasks), then the enum type.
 DROP TABLE IF EXISTS workout_sets;
+DROP TABLE IF EXISTS hour_photos;
+DROP TABLE IF EXISTS hour_log;
 DROP TABLE IF EXISTS sleeps;
 DROP TABLE IF EXISTS logs;
 DROP TABLE IF EXISTS tasks;
@@ -69,6 +71,31 @@ CREATE TABLE workout_sets (
 );
 
 CREATE INDEX idx_workout_sets_date ON workout_sets (workout_date DESC);
+
+-- Hourly check-in: one row per hour, answer is a single free-text line.
+-- `period` is the START of the hour the question was about (00:00 question
+-- covers 00:00–01:00). Unanswered hours simply have no row.
+CREATE TABLE hour_log (
+  id         INTEGER      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  period     TIMESTAMPTZ  NOT NULL UNIQUE,   -- start of the hour (MVP: utc minute trunc)
+  note       TEXT         NOT NULL,
+  chat_id    BIGINT       NOT NULL,
+  created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_hour_log_period ON hour_log (period DESC);
+
+-- Photos attached to an hourly check-in. Deliberately no FK on hour_log:
+-- a photo can be dropped on a period that still has no text answer.
+CREATE TABLE hour_photos (
+  id         INTEGER      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  period     TIMESTAMPTZ  NOT NULL,          -- same hour_start as hour_log.period
+  hash       TEXT         NOT NULL,          -- hydrus hash, or Telegram file_id fallback
+  chat_id    BIGINT       NOT NULL,
+  created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_hour_photos_period ON hour_photos (period DESC);
 
 -- ---------------------------------------------------------------------------
 -- seed: tasks

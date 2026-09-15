@@ -245,6 +245,42 @@ def test_repeat_order_independent_and_typed_frequency(tmp_path, engine):
     assert rec.record == {"period": "month", "every": 10}
 
 
+def test_photos_collects_attachments_until_done(tmp_path, engine):
+    from philippe.core import Attachment, InputKind, PHOTOS_DONE
+    form = make_form(tmp_path, "- {key: pics, type: photos, label: Pics}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(attachment=Attachment(InputKind.PHOTO, "f1")))
+    assert "review" not in out.prompt.text.lower()
+    engine.step(s, Input(attachment=Attachment(InputKind.DOCUMENT, "f2")))
+    out = engine.step(s, Input(button=PHOTOS_DONE))
+    assert "review" in out.prompt.text.lower()
+    rec = engine.step(s, Input(button=SUBMIT))
+    assert rec.record == {"pics": ["f1", "f2"]}  # file_ids; adapter swaps for hashes
+
+
+def test_photos_required_done_with_nothing_reasks(tmp_path, engine):
+    from philippe.core import PHOTOS_DONE
+    form = make_form(tmp_path, "- {key: pics, type: photos, label: Pics}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(button=PHOTOS_DONE))
+    assert "хотя бы одно" in out.prompt.text
+    assert "review" not in out.prompt.text.lower()
+
+
+def test_photos_optional_can_finish_empty(tmp_path, engine):
+    from philippe.core import PHOTOS_DONE
+    form = make_form(tmp_path,
+                     "- {key: pics, type: photos, label: Pics, required: false}")
+    s = Session(form=form)
+    engine.start(s)
+    out = engine.step(s, Input(button=PHOTOS_DONE))
+    assert "review" in out.prompt.text.lower()
+    rec = engine.step(s, Input(button=SUBMIT))
+    assert rec.record == {"pics": []}
+
+
 def test_repeat_rejects_out_of_bounds_frequency(tmp_path, engine):
     form = make_form(tmp_path, "- {key: r, type: repeat, label: R}")
     s = Session(form=form)
@@ -452,3 +488,46 @@ def _write(tmp_path, body: str):
     p = tmp_path / "form.yaml"
     p.write_text(textwrap.dedent(body), encoding="utf-8")
     return p
+
+# --- auto_submit ------------------------------------------------------------
+
+def _auto_form_fields(tmp_path):
+    return (
+        "  - key: period\n"
+        "    type: text\n"
+        "    label: Period\n"
+        "  - key: note\n"
+        "    type: text\n"
+        "    label: Что делал\n"
+    )
+
+def write_form(tmp_path, extra):
+    path = tmp_path / "hour.yaml"
+    path.write_text(
+        "name: hour\ntitle: H\ntable: hour_log\n"
+        + extra + "fields:\n" + _auto_form_fields(tmp_path),
+        encoding="utf-8",
+    )
+    return load_form(path)
+
+def test_auto_submit_skips_review_when_prefilled(tmp_path):
+    form = write_form(tmp_path, "auto_submit: true\n")
+    form.submit_once = True
+    session = Session(form=form)
+    outcome = Engine().start(session, prefill={"period": "01:00"})
+    # period prefilled -> only `note` is asked, still filling.
+    assert isinstance(outcome, Show)
+
+    outcome = Engine().step(session, Input(text="мемки"))
+    # both answered now -> straight to Completed, no review, no restart
+    assert isinstance(outcome, Completed)
+    assert outcome.record == {"period": "01:00", "note": "мемки"}
+    assert outcome.restart is False
+
+def test_no_auto_submit_still_shows_review(tmp_path):
+    form = write_form(tmp_path, "submit_once: true\n")
+    session = Session(form=form)
+    outcome = Engine().start(session, prefill={"period": "01:00"})
+    outcome = Engine().step(session, Input(text="мемки"))
+    assert isinstance(outcome, Show)  # review screen, mode=add to check
+    assert session.mode == "review"

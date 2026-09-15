@@ -1,0 +1,10 @@
+# Read-only view: what you logged in the last 24 hours, newest first.
+name: hours
+title: Последние 24 часа
+kind: query
+
+query: |
+  SELECT to_char(period, 'DD Mon HH24:MI') || ' — ' || note AS label
+  FROM hour_log
+  WHERE period > now() - interval '24 hours'
+  ORDER BY period DESC

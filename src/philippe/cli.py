@@ -17,6 +17,7 @@ from .core import FormError, form_needs_db, load_form
 TOKEN_ENV = "PHILIPPE_BOT_TOKEN"
 DATABASE_ENV = "DATABASE_URL"
 ALLOWED_ENV = "PHILIPPE_ALLOWED_IDS"
+HOUR_CHAT_ENV = "PHILIPPE_HOUR_CHAT"
 HYDRUS_URL_ENV = "HYDRUS_URL"
 HYDRUS_KEY_ENV = "HYDRUS_KEY"
 
@@ -52,6 +53,16 @@ def resolve_allowed_ids(explicit: str | None) -> set[int] | None:
         return {int(part) for part in raw.replace(" ", "").split(",") if part}
     except ValueError:
         raise SystemExit(f"{ALLOWED_ENV} must be comma-separated ids, e.g. 111,222")
+
+
+def resolve_hour_chat() -> int | None:
+    raw = os.environ.get(HOUR_CHAT_ENV)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"{HOUR_CHAT_ENV} must be a Telegram chat id, got {raw!r}")
 
 
 def resolve_hydrus() -> tuple[str, str] | None:
@@ -175,7 +186,8 @@ def cmd_run(args) -> None:
     hydrus_client = _build_hydrus()
     run_bot(forms, resolve_token(args.token), sink=sink, catalog=catalog,
             hydrus_client=hydrus_client,
-            allowed_ids=resolve_allowed_ids(args.allowed_ids))
+            allowed_ids=resolve_allowed_ids(args.allowed_ids),
+            hour_chat=resolve_hour_chat())
 
 
 def _build_db(forms, dsn: str | None):

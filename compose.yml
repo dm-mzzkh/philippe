@@ -1,12 +1,13 @@
-# Full production stack for the home server: Postgres + the bot (+ pgweb).
-#   docker compose up -d --build
-# Postgres is NOT published to the host — the bot reaches it over the compose
-# network. pgweb is bound to the Tailscale address only (PGWEB_BIND in .env).
+# The bot, plus an OPTIONAL bundled Postgres + pgweb + CloudBeaver.
+#   docker compose up -d --build                     # bot only → external DB via DATABASE_URL
+#   docker compose --profile localdb up -d --build   # also start Postgres + pgweb (:8081) + CloudBeaver (:8978)
+# Set DATABASE_URL in .env to point at an existing DB; unset → the bundled db service.
 name: philippe
 
 services:
   db:
     image: postgres:17
+    profiles: ["localdb"]
     environment:
       POSTGRES_USER: bot
       POSTGRES_PASSWORD: bot
@@ -26,18 +27,21 @@ services:
     build:
       context: .
     image: philippe-bot:latest
-    env_file: .env                       # PHILIPPE_BOT_TOKEN (+ optional PHILIPPE_ALLOWED_IDS)
+    env_file: .env                       # PHILIPPE_BOT_TOKEN, DATABASE_URL (+ optional PHILIPPE_ALLOWED_IDS)
     environment:
-      DATABASE_URL: postgresql://bot:bot@db:5432/bot_dev
+      # .env DATABASE_URL wins; falls back to the bundled db (profile localdb).
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bot:bot@db:5432/bot_dev}
     volumes:
       - ./examples:/app/examples:ro      # edit forms + `docker compose restart bot`
     depends_on:
       db:
         condition: service_healthy
+        required: false                  # external DB → db service not started, don't error
     restart: unless-stopped
 
   pgweb:
     image: sosedoff/pgweb:latest
+    profiles: ["localdb"]
     ports:
       # PGWEB_BIND is set to the Tailscale IP in .env → reachable only over the tailnet.
       - "${PGWEB_BIND:-127.0.0.1}:8081:8081"
@@ -48,5 +52,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # CloudBeaver — a richer web DB browser than pgweb. First run only: open :8978,
+  # create the admin user, then add a connection (host=db, port=5432, user=bot,
+  # pass=bot, db=bot_dev); the workspace volume persists it. NOTE: its BLOB value
+  # panel shows Text/HEX/Base64 only — it does NOT render bytea as an image.
+  cloudbeaver:
+    image: dbeaver/cloudbeaver:latest
+    profiles: ["localdb"]
+    ports:
+      - "${PGWEB_BIND:-127.0.0.1}:8978:8978"
+    volumes:
+      - cloudbeaver:/opt/cloudbeaver/workspace
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  cloudbeaver:

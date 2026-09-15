@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import socket
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -89,15 +92,21 @@ from .core import Attachment, SelectSpec
 
 
 class Runner:
-    def __init__(self, forms, sink, catalog=None, hydrus_client=None):
+    def __init__(self, forms, sink, catalog=None, hydrus_client=None, host=None):
         self.forms = forms
         self.sink = sink
         self.catalog = catalog
         self.hydrus_client = hydrus_client
+        # Which machine is this bot running on — shown in /start.
+        self.host = host or os.environ.get("PHILIPPE_HOST") or socket.gethostname()
         self.engine = Engine()
         self._sessions: dict[int, Session] = {}
         self._buttons: dict[int, list[str]] = {}
         self._actions: dict[int, tuple] = {}
+        # MVP hourly check-in state: chat_id -> (hour_start, message_id).
+        # ponytail: in-memory only; a reboot loses the pending question — fine,
+        # missed hours are skipped by design.
+        self._pending: dict[int, tuple[datetime, int]] = {}
 
     async def new_session(self, name: str) -> Session:
         base = self.forms[name]
@@ -330,6 +339,100 @@ class Runner:
         except (ValueError, IndexError):
             return None
 
+    async def save_hour_reply(self, message: Message, period: datetime) -> None:
+        """Store one reply: text line into hour_log, photos into hour_photos.
+        Re-replies to the same question OVERWRITE: text replaces the note,
+        photos for the period are reset to the new set. The bot never sends
+        the photos back — too heavy."""
+        note = (message.text or message.caption or "").strip()
+        photos = message.photo or []
+        if not note and not photos:
+            await message.answer("Пусто — нужен текст или фото.")
+            return
+        record = {"period": period, "note": note}
+        record.update(self._context(message, self.forms["hour"]))
+        try:
+            if note:
+                # ponytail: UPDATE-or-INSERT via rowcount beats ON CONFLICT
+                # here because the sink API is form-shaped; fine at 1 row/hour.
+                cur = await asyncio.to_thread(
+                    self.sink.exec,
+                    'UPDATE hour_log SET note = %s::text '
+                    'WHERE period = %s::timestamptz RETURNING id',
+                    [note, period],
+                )
+                if cur is None:  # no existing row for this period
+                    await asyncio.to_thread(self.sink.save, self.forms["hour"], record)
+            # photos always reset: the new reply's set replaces the old one
+            await asyncio.to_thread(
+                self.sink.exec,
+                "DELETE FROM hour_photos WHERE period = %s::timestamptz",
+                [period],
+            )
+            for _ in photos:
+                await self._save_hour_photo(message, period)
+        except Exception as e:
+            logger.exception("hour check-in save failed")
+            await message.answer(f"⚠️ Could not save: {e}")
+            return
+        parts = []
+        if note:
+            words = " ".join(note.split())
+            # ponytail: MVP — 10 words then ellipsis, was measured against a
+            # favourite example; raise the cap if long entries matter.
+            words = " ".join(words.split()[:10]) + "…" if len(words.split()) > 10 else words
+            parts.append(f'✔ Записал: "{words}"')
+        if photos:
+            parts.append(f"• 📷 {len(photos)}")
+        await message.answer("\n".join(parts))
+
+    async def _save_hour_photo(self, message: Message, period: datetime) -> None:
+        """One photo -> one hour_photos row. Hydrus hash when configured,
+        raw Telegram file_id otherwise (ponytail: no hydrus integration for
+        hourly check-ins)."""
+        file_id = message.photo[-1].file_id
+        hash_ = file_id
+        if self.hydrus_client is not None:
+            data = (await message.bot.download(file_id)).read()
+            hash_ = await asyncio.to_thread(self.hydrus_client.upload, data)
+        await asyncio.to_thread(
+            self.sink.insert, "hour_photos",
+            {"period": period, "hash": hash_, "chat_id": message.chat.id},
+        )
+
+
+# ---------------------------------------------------------------------------
+# MVP hourly check-in scheduler
+# ---------------------------------------------------------------------------
+
+# ponytail: MVP hack hourly nag — one target chat, in-memory pending state,
+# no catch-up for missed hours. Add persistence/queue only if that bites.
+
+HOUR_ASK_MINUTE = 15  # ask at :15, so the hour itself starts uninterrupted
+
+
+async def hour_nag_loop(runner: Runner, bot: Bot, chat_id: int) -> None:
+    """Every hour at :15 ask the target chat what it did the hour before.
+
+    The bot waits for a *reply* to exactly this question; the reply is stored
+    as one free-text row. Non-replies are left alone entirely.
+    """
+    logger.info("hourly check-in nagging chat %s", chat_id)
+    asked_for = None
+    while True:
+        now = datetime.now(timezone.utc).astimezone()
+        anchor = now.replace(minute=0, second=0, microsecond=0)
+        if asked_for is None or asked_for < anchor:
+            if now.minute >= HOUR_ASK_MINUTE:
+                prev = anchor - timedelta(hours=1)  # the hour just ended
+                text = f"❓ Что делал за {prev:%H:%M}–{anchor:%H:%M}?"
+                msg = await bot.send_message(chat_id, text)
+                runner._pending[chat_id] = (prev, msg.message_id)
+                asked_for = anchor
+        # sleep until next hour's :15:05
+        wake = anchor + timedelta(hours=1, minutes=HOUR_ASK_MINUTE, seconds=5)
+        await asyncio.sleep(max((wake - now).total_seconds(), 5.0))
+
 
 def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dispatcher:
     router = Router()
@@ -339,7 +442,8 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
-        await message.answer("Кнопка «📋 Forms» всегда под рукой 👇",
+        await message.answer("Кнопка «📋 Forms» всегда под рукой 👇\n"
+                             f"🤖 Запущен на: {runner.host}",
                              reply_markup=FORMS_REPLY_KB)
         await runner.show_menu(message)
 
@@ -378,7 +482,16 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
 
     @router.message()
     async def on_message(message: Message) -> None:
-        session = runner._sessions.get(message.chat.id)
+        chat_id = message.chat.id
+        # Hourly check-in: only a reply to the bot's current question counts.
+        pending = runner._pending.get(chat_id)
+        if (pending is not None and message.reply_to_message
+                and message.reply_to_message.message_id == pending[1]):
+            # pending stays alive until the next hourly question — a newer
+            # reply to the same question just overwrites period's row.
+            await runner.save_hour_reply(message, pending[0])
+            return
+        session = runner._sessions.get(chat_id)
         if session is None:
             await message.answer("Send /forms to pick a form.")
             return
@@ -397,8 +510,11 @@ def run_bot(
     catalog=None,
     hydrus_client=None,
     allowed_ids: set[int] | None = None,
+    hour_chat: int | None = None,
 ) -> None:
-    runner = Runner(forms, sink, catalog=catalog, hydrus_client=hydrus_client)
+    runner = Runner(forms, sink, catalog=catalog,
+                    hydrus_client=hydrus_client,
+                    host=os.environ.get("PHILIPPE_HOST"))
     dispatcher = build_dispatcher(runner, allowed_ids=allowed_ids)
     bot = Bot(token)
 
@@ -406,6 +522,10 @@ def run_bot(
         from aiogram.types import BotCommand
         logger.info("starting bot with forms: %s%s", ", ".join(forms),
                     f" (whitelist: {len(allowed_ids)} ids)" if allowed_ids else "")
+        if hour_chat is not None:
+            asyncio.create_task(hour_nag_loop(runner, bot, hour_chat))
+        else:
+            logger.info("PHILIPPE_HOUR_CHAT unset — hourly check-in disabled")
         try:
             await bot.set_my_commands([
                 BotCommand(command="forms", description="List forms to fill"),

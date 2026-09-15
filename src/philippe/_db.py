@@ -99,6 +99,31 @@ class SqlSink:
             self._conn.rollback()
             raise
 
+    def exec(self, sql: str, params: list | None = None):
+        """Raw UPDATE/DELETE for the hourly-check overwrite path. Returns the
+        cursor so RETURNING rows can be read."""
+        with self._conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = (cur.fetchone() if cur.description else None)
+        self._conn.commit()
+        return row
+
+    def insert(self, table: str, record: dict[str, Any]) -> None:
+        """Same INSERT as save(), but straight into *table* (no FormSpec)."""
+        if not record:
+            raise ValueError("insert() got an empty record")
+        types = self._column_types(table)
+        columns = list(record)
+        col_sql = ", ".join(quote_ident(c) for c in columns)
+        values_sql = ", ".join(_placeholder(types.get(c)) for c in columns)
+        statement = (
+            f"INSERT INTO {quote_ident(table)} ({col_sql}) VALUES ({values_sql})"
+        )
+        params = [record[c] for c in columns]
+        with self._conn.cursor() as cur:
+            cur.execute(statement, params)
+        self._conn.commit()
+
     def _column_types(self, table: str) -> dict[str, str]:
         if table not in self._types:
             with self._conn.cursor() as cur:
@@ -117,6 +142,11 @@ def _placeholder(udt_name: str | None) -> str:
 
 class LoggingSink:
     def save(self, form: FormSpec, record: dict[str, Any]) -> None:
-        target = form.table or form.name
-        logger.info("record for %s: %s", target, json.dumps(record, default=str,
-                                                              ensure_ascii=False))
+        self.insert(form.table or form.name, record)
+
+    def insert(self, table: str, record: dict[str, Any]) -> None:
+        logger.info("insert into %s: %s", table, json.dumps(record, default=str,
+                                                            ensure_ascii=False))
+
+    def exec(self, sql: str, params: list | None = None) -> None:
+        logger.info("exec: %s %s", sql, params)

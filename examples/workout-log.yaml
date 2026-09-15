@@ -1,16 +1,19 @@
-# A read-only VIEW (kind: query): recent workout sets, newest first.
-# Each row: date · exercise · подходы×повт @ вес. Needs a database.
+# Read-only VIEW: workouts grouped by date. Each row is one training day;
+# exercises listed below the date. Needs a database.
 name: workout-log
 title: Дневник тренировок
 kind: query
 query: |
   SELECT
-    to_char(ws.workout_date, 'DD.MM') || ' · ' || ws.exercise
-      || ' · ' || ws.sets || '×' || ws.reps
-      || CASE WHEN ws.weight IS NOT NULL
-              THEN ' @ ' || to_char(ws.weight, 'FM999990.##') || 'кг'
-              ELSE '' END
-      AS label
-  FROM workout_sets ws
-  ORDER BY ws.workout_date DESC, ws.id DESC
-  LIMIT 20;
+    to_char(workout_date, 'DD.MM') || E'\n' ||
+    string_agg(
+      exercise || ' · ' || sets || '×' || reps ||
+      CASE WHEN weight IS NOT NULL
+        THEN ' @ ' || to_char(weight, 'FM999990.##') || 'кг'
+        ELSE '' END,
+      E'\n' ORDER BY id
+    ) AS label
+  FROM workout_sets
+  GROUP BY workout_date
+  ORDER BY workout_date DESC
+  LIMIT 10;
