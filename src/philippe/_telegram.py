@@ -408,7 +408,7 @@ class Runner:
 # ponytail: MVP hack hourly nag — one target chat, in-memory pending state,
 # no catch-up for missed hours. Add persistence/queue only if that bites.
 
-HOUR_ASK_MINUTE = 15  # ask at :15, so the hour itself starts uninterrupted
+HOUR_ASK_MINUTE = 0  # ask right at :00 about the hour that just ended
 
 
 def _local_now() -> datetime:
