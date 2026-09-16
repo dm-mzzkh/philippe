@@ -408,3 +408,37 @@ def test_save_hour_reply_photo_only_keeps_old_note_but_resets_photos():
 def test_start_shows_host():
     from philippe._telegram import Runner
     assert Runner(forms={}, sink=None).host  # always truthy via env/hostname
+
+
+# --- hourly check-in: stateless question parse --------------------------------
+
+def _question(text, from_bot=True):
+    class _U: is_bot = from_bot
+    m = _HourMessage.__new__(_HourMessage)
+    m.text = text; m.from_user = _U if from_bot else None
+    return m
+
+
+def test_period_from_question_parses_date_and_hours():
+    import datetime as dt
+    from philippe._telegram import _period_from_question, _local_now
+
+    now = _local_now()
+    y, mo, d = now.year, now.month, now.day
+    per = _period_from_question(
+        _question(f"❓ Что делал за {d:02d}.{mo:02d} 14:00–15:00?"))
+    assert (per.day, per.month, per.hour) == (d, mo, 14)
+
+    # year rollover: a 31.12 23:00–00:00 question answered on Jan 1st
+    old = dt.date(y - 1, 12, 31)
+    per = _period_from_question(
+        _question(f"❓ Что делал за {old.day:02d}.{old.month:02d} 23:00–00:00?"))
+    assert (per.month, per.day, per.hour, per.year) == (12, 31, 23, y - 1)
+
+
+def test_period_from_question_rejects_non_question():
+    from philippe._telegram import _period_from_question
+    assert _period_from_question(_question("обычное сообщение")) is None
+    # echo by a human (not the bot) can't fake a period
+    assert _period_from_question(
+        _question("❓ Что делал за 16.09 02:00–03:00?", from_bot=False)) is None

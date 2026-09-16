@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import socket
 from datetime import datetime, timedelta, timezone
 
@@ -103,10 +104,6 @@ class Runner:
         self._sessions: dict[int, Session] = {}
         self._buttons: dict[int, list[str]] = {}
         self._actions: dict[int, tuple] = {}
-        # MVP hourly check-in state: chat_id -> (hour_start, message_id).
-        # ponytail: in-memory only; a reboot loses the pending question — fine,
-        # missed hours are skipped by design.
-        self._pending: dict[int, tuple[datetime, int]] = {}
 
     async def new_session(self, name: str) -> Session:
         base = self.forms[name]
@@ -411,6 +408,30 @@ class Runner:
 HOUR_ASK_MINUTE = 0  # ask right at :00 about the hour that just ended
 
 
+_HOUR_QUESTION_RE = re.compile(
+    r"Что делал за (\d{2})\.(\d{2}) (\d{2}):00–(\d{2}):00\?")
+
+
+def _period_from_question(question: Message) -> datetime | None:
+    """Parse the asked period out of the hourly question text we're replied
+    to. Returns the hour-start in bot-local time, or None if it's not an
+    hourly-check-in question (a reply to any other message flows through the
+    normal form pipeline). Requires the replied message to come from the bot,
+    so a user echoing the question at themselves can't fake a period."""
+    if not question.from_user or not question.from_user.is_bot:
+        return None
+    m = _HOUR_QUESTION_RE.search(question.text or "")
+    if not m:
+        return None
+    dd, mm, hh1 = int(m[1]), int(m[2]), int(m[3])
+    now = _local_now()
+    start = now.replace(year=now.year, month=mm, day=dd, hour=hh1,
+                        minute=0, second=0, microsecond=0)
+    if start > now:  # replies are always about the past → year rollover
+        start = start.replace(year=now.year - 1)
+    return start
+
+
 def _local_now() -> datetime:
     """Wall-clock time for the hourly check-in. PHILIPPE_TZ (IANA name) wins;
     containers have no local tz, so without it we'd nag in UTC."""
@@ -435,9 +456,9 @@ async def hour_nag_loop(runner: Runner, bot: Bot, chat_id: int) -> None:
         if asked_for is None or asked_for < anchor:
             if now.minute >= HOUR_ASK_MINUTE:
                 prev = anchor - timedelta(hours=1)  # the hour just ended
-                text = f"❓ Что делал за {prev:%H:%M}–{anchor:%H:%M}?"
-                msg = await bot.send_message(chat_id, text)
-                runner._pending[chat_id] = (prev, msg.message_id)
+                text = (f"❓ Что делал за {prev.day:02d}.{prev.month:02d} "
+                        f"{prev:%H:%M}–{anchor:%H:%M}?")
+                await bot.send_message(chat_id, text)
                 asked_for = anchor
         # sleep until next hour's :15:05
         wake = anchor + timedelta(hours=1, minutes=HOUR_ASK_MINUTE, seconds=5)
@@ -493,13 +514,16 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
     @router.message()
     async def on_message(message: Message) -> None:
         chat_id = message.chat.id
-        # Hourly check-in: only a reply to the bot's current question counts.
-        pending = runner._pending.get(chat_id)
-        if (pending is not None and message.reply_to_message
-                and message.reply_to_message.message_id == pending[1]):
-            # pending stays alive until the next hourly question — a newer
-            # reply to the same question just overwrites period's row.
-            await runner.save_hour_reply(message, pending[0])
+        # Hourly check-in: stateless — the period is parsed from the question
+        # text we're being replied to (it carries the date, e.g.
+        # "❓ Что делал за 25.09 22:00–23:00?"). Late replies to older
+        # questions keep working, no in-memory state to lose on restart.
+        r = message.reply_to_message
+        period = _period_from_question(r) if r is not None else None
+        if period is not None:
+            # a reply to a question overwrites that period's row, whenever it
+            # was first answered
+            await runner.save_hour_reply(message, period)
             return
         session = runner._sessions.get(chat_id)
         if session is None:
