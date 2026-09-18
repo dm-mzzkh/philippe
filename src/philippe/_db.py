@@ -76,6 +76,22 @@ class SqlSink:
         self._conn = connection
         self._types: dict[str, dict[str, str]] = {}
 
+    def _reconnect(self) -> None:
+        self._conn = connect(self._conn.info.dsn)  # noqa: raises w/o psycopg
+
+    def _retry(self, work):
+        """Run a DB call. A dead connection (idle timeout, server restart)
+        poisons all later calls with 'the connection is closed' — reopen
+        once and retry. autocommit means a half-done step can't linger:
+        everything is one INSERT/UPDATE."""
+        try:
+            return work()
+        except Exception as e:
+            if type(e).__name__ != "OperationalError":
+                raise
+            self._reconnect()
+            return work()
+
     def save(self, form: FormSpec, record: dict[str, Any]) -> None:
         if not form.table:
             raise ValueError(f"form '{form.name}' has no 'table' to insert into")
@@ -91,10 +107,13 @@ class SqlSink:
         )
         params = [record[c] for c in columns]
 
-        try:
+        def once():
             with self._conn.cursor() as cur:
                 cur.execute(statement, params)
             self._conn.commit()
+
+        try:
+            self._retry(once)
         except Exception:
             self._conn.rollback()
             raise
@@ -102,11 +121,14 @@ class SqlSink:
     def exec(self, sql: str, params: list | None = None):
         """Raw UPDATE/DELETE for the hourly-check overwrite path. Returns the
         cursor so RETURNING rows can be read."""
-        with self._conn.cursor() as cur:
-            cur.execute(sql, params)
-            row = (cur.fetchone() if cur.description else None)
-        self._conn.commit()
-        return row
+        def once():
+            with self._conn.cursor() as cur:
+                cur.execute(sql, params)
+                row = (cur.fetchone() if cur.description else None)
+            self._conn.commit()
+            return row
+
+        return self._retry(once)
 
     def insert(self, table: str, record: dict[str, Any]) -> None:
         """Same INSERT as save(), but straight into *table* (no FormSpec)."""
@@ -120,9 +142,13 @@ class SqlSink:
             f"INSERT INTO {quote_ident(table)} ({col_sql}) VALUES ({values_sql})"
         )
         params = [record[c] for c in columns]
-        with self._conn.cursor() as cur:
-            cur.execute(statement, params)
-        self._conn.commit()
+
+        def once():
+            with self._conn.cursor() as cur:
+                cur.execute(statement, params)
+            self._conn.commit()
+
+        self._retry(once)
 
     def _column_types(self, table: str) -> dict[str, str]:
         if table not in self._types:

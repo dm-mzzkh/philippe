@@ -433,3 +433,57 @@ def test_sql_sink_insert_casts_and_commits_without_formspec():
 def test_sql_sink_insert_rejects_empty_record():
     with pytest.raises(ValueError):
         SqlSink(FakeConn(rows=[])).insert("hour_photos", {})
+
+
+# --- dead-connection reconnect ------------------------------------------------
+
+def test_sqlsink_reconnects_after_connection_death():
+    OpsError = type("OperationalError", (Exception,), {})
+
+    class DeadCursor:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def execute(self, sql, params=None): raise OpsError(
+            "the connection is closed")
+
+    class GoodCursor:
+        def __init__(self, conn): self._conn = conn
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def execute(self, sql, params=None):
+            self._conn.executed.append(sql)
+        def fetchall(self): return []
+
+    class Conn:
+        def __init__(self): self.executed = []
+        def cursor(self):
+            return GoodCursor(self)
+
+    bad = Conn()
+    sink = SqlSink(bad)
+
+    # first cursor call is dead (FakeConn-shaped), next conn works
+    class FlakyConn:
+        def __init__(self, fail): self.fail = fail; self.executed = []
+        def commit(self): pass
+        def cursor(self):
+            if self.fail:
+                self.fail = False
+                return DeadCursor()
+            return GoodCursor(self)
+
+    calls = {"n": 0}
+    flaky = FlakyConn(fail=True)
+    sink = SqlSink(flaky)
+    sink._types = {"hour_log": {}}   # skip the column-lookup query
+
+    def fake_reconnect():
+        calls["n"] += 1
+        sink._conn = FlakyConn(fail=False)
+
+    sink._reconnect = fake_reconnect
+    sink.insert("hour_log", {"note": "x"})
+
+    assert calls["n"] == 1                       # reopened once
+    assert flaky.executed == []                  # nothing ran on dead conn
+    assert sink._conn.executed                   # SQL ran on fresh conn
