@@ -479,9 +479,11 @@ def test_sqlsink_reconnects_after_connection_death():
 
     def fake_reconnect():
         calls["n"] += 1
+        assert sink._dsn == "dsn://test"   # not conn.info.dsn (password redacted)
         sink._conn = FlakyConn(fail=False)
 
     sink._reconnect = fake_reconnect
+    sink._dsn = "dsn://test"
     sink.insert("hour_log", {"note": "x"})
 
     assert calls["n"] == 1                       # reopened once

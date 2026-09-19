@@ -72,12 +72,17 @@ def _row_choice(row: dict[str, Any]) -> tuple[str, Any]:
 
 
 class SqlSink:
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, dsn: str | None = None) -> None:
         self._conn = connection
+        # dsn kept verbatim for reconnects: psycopg redacts the password out
+        # of conn.info.dsn, so reconnecting from it fails with fe_sendauth.
+        self._dsn = dsn
         self._types: dict[str, dict[str, str]] = {}
 
     def _reconnect(self) -> None:
-        self._conn = connect(self._conn.info.dsn)  # noqa: raises w/o psycopg
+        if not self._dsn:
+            raise RuntimeError("SqlSink built without a dsn cannot reconnect")
+        self._conn = connect(self._dsn)
 
     def _retry(self, work):
         """Run a DB call. A dead connection (idle timeout, server restart)

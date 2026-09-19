@@ -201,7 +201,7 @@ def _build_db(forms, dsn: str | None):
         return LoggingSink(), None
 
     conn = connect(dsn)
-    return SqlSink(conn), SqlCatalog(conn)
+    return SqlSink(conn, dsn=dsn), SqlCatalog(conn)
 
 
 def _build_hydrus():
