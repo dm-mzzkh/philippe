@@ -417,24 +417,6 @@ fields:
     required: false
 """
 
-# --- sink.insert (hourly check-in path) -------------------------------------
-
-def test_sql_sink_insert_casts_and_commits_without_formspec():
-    conn = FakeConn(rows=[("period", "timestamptz"), ("hash", "text")])
-    SqlSink(conn).insert("hour_photos", {"period": dt.datetime(2026, 9, 16, 1),
-                                         "hash": "abc"})
-    insert_sql, params = conn.cursor_obj.executed[1]
-    assert insert_sql == ('INSERT INTO "hour_photos" ("period", "hash") '
-                          'VALUES (%s::timestamptz, %s::text)')
-    assert params == [dt.datetime(2026, 9, 16, 1), "abc"]
-    assert conn.commits == 1
-
-
-def test_sql_sink_insert_rejects_empty_record():
-    with pytest.raises(ValueError):
-        SqlSink(FakeConn(rows=[])).insert("hour_photos", {})
-
-
 # --- dead-connection reconnect ------------------------------------------------
 
 def test_sqlsink_reconnects_after_connection_death():
@@ -454,14 +436,6 @@ def test_sqlsink_reconnects_after_connection_death():
             self._conn.executed.append(sql)
         def fetchall(self): return []
 
-    class Conn:
-        def __init__(self): self.executed = []
-        def cursor(self):
-            return GoodCursor(self)
-
-    bad = Conn()
-    sink = SqlSink(bad)
-
     # first cursor call is dead (FakeConn-shaped), next conn works
     class FlakyConn:
         def __init__(self, fail): self.fail = fail; self.executed = []
@@ -475,7 +449,7 @@ def test_sqlsink_reconnects_after_connection_death():
     calls = {"n": 0}
     flaky = FlakyConn(fail=True)
     sink = SqlSink(flaky)
-    sink._types = {"hour_log": {}}   # skip the column-lookup query
+    sink._types = {"zz_table": {}}   # skip the column-lookup query
 
     def fake_reconnect():
         calls["n"] += 1
@@ -484,7 +458,13 @@ def test_sqlsink_reconnects_after_connection_death():
 
     sink._reconnect = fake_reconnect
     sink._dsn = "dsn://test"
-    sink.insert("hour_log", {"note": "x"})
+    from philippe.core import load_form
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "f.yaml"
+        p.write_text("name: t\ntitle: T\ntable: zz_table\n"
+                     "fields:\n  - key: note\n    type: text\n    label: n\n")
+        sink.save(load_form(p), {"note": "x"})
 
     assert calls["n"] == 1                       # reopened once
     assert flaky.executed == []                  # nothing ran on dead conn

@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import socket
-from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -336,134 +334,6 @@ class Runner:
         except (ValueError, IndexError):
             return None
 
-    async def save_hour_reply(self, message: Message, period: datetime) -> None:
-        """Store one reply: text line into hour_log, photos into hour_photos.
-        Re-replies to the same question OVERWRITE: text replaces the note,
-        photos for the period are reset to the new set. The bot never sends
-        the photos back — too heavy."""
-        note = (message.text or message.caption or "").strip()
-        photos = message.photo or []
-        if not note and not photos:
-            await message.answer("Пусто — нужен текст или фото.")
-            return
-        record = {"period": period, "note": note}
-        record.update(self._context(message, self.forms["hour"]))
-        try:
-            if note:
-                # ponytail: UPDATE-or-INSERT via rowcount beats ON CONFLICT
-                # here because the sink API is form-shaped; fine at 1 row/hour.
-                cur = await asyncio.to_thread(
-                    self.sink.exec,
-                    'UPDATE hour_log SET note = %s::text '
-                    'WHERE period = %s::timestamptz RETURNING id',
-                    [note, period],
-                )
-                if cur is None:  # no existing row for this period
-                    await asyncio.to_thread(self.sink.save, self.forms["hour"], record)
-            # photos always reset: the new reply's set replaces the old one
-            await asyncio.to_thread(
-                self.sink.exec,
-                "DELETE FROM hour_photos WHERE period = %s::timestamptz",
-                [period],
-            )
-            for _ in photos:
-                await self._save_hour_photo(message, period)
-        except Exception as e:
-            logger.exception("hour check-in save failed")
-            await message.answer(f"⚠️ Could not save: {e}")
-            return
-        parts = []
-        if note:
-            words = " ".join(note.split())
-            # ponytail: MVP — 10 words then ellipsis, was measured against a
-            # favourite example; raise the cap if long entries matter.
-            words = " ".join(words.split()[:10]) + "…" if len(words.split()) > 10 else words
-            parts.append(f'✔ Записал: "{words}"')
-        if photos:
-            parts.append(f"• 📷 {len(photos)}")
-        await message.answer("\n".join(parts))
-
-    async def _save_hour_photo(self, message: Message, period: datetime) -> None:
-        """One photo -> one hour_photos row. Hydrus hash when configured,
-        raw Telegram file_id otherwise (ponytail: no hydrus integration for
-        hourly check-ins)."""
-        file_id = message.photo[-1].file_id
-        hash_ = file_id
-        if self.hydrus_client is not None:
-            data = (await message.bot.download(file_id)).read()
-            hash_ = await asyncio.to_thread(self.hydrus_client.upload, data)
-        await asyncio.to_thread(
-            self.sink.insert, "hour_photos",
-            {"period": period, "hash": hash_, "chat_id": message.chat.id},
-        )
-
-
-# ---------------------------------------------------------------------------
-# MVP hourly check-in scheduler
-# ---------------------------------------------------------------------------
-
-# ponytail: MVP hack hourly nag — one target chat, in-memory pending state,
-# no catch-up for missed hours. Add persistence/queue only if that bites.
-
-HOUR_ASK_MINUTE = 0  # ask right at :00 about the hour that just ended
-
-
-_HOUR_QUESTION_RE = re.compile(
-    r"Что делал за (\d{2})\.(\d{2}) (\d{2}):00–(\d{2}):00\?")
-
-
-def _period_from_question(question: Message) -> datetime | None:
-    """Parse the asked period out of the hourly question text we're replied
-    to. Returns the hour-start in bot-local time, or None if it's not an
-    hourly-check-in question (a reply to any other message flows through the
-    normal form pipeline). Requires the replied message to come from the bot,
-    so a user echoing the question at themselves can't fake a period."""
-    if not question.from_user or not question.from_user.is_bot:
-        return None
-    m = _HOUR_QUESTION_RE.search(question.text or "")
-    if not m:
-        return None
-    dd, mm, hh1 = int(m[1]), int(m[2]), int(m[3])
-    now = _local_now()
-    start = now.replace(year=now.year, month=mm, day=dd, hour=hh1,
-                        minute=0, second=0, microsecond=0)
-    if start > now:  # replies are always about the past → year rollover
-        start = start.replace(year=now.year - 1)
-    return start
-
-
-def _local_now() -> datetime:
-    """Wall-clock time for the hourly check-in. PHILIPPE_TZ (IANA name) wins;
-    containers have no local tz, so without it we'd nag in UTC."""
-    name = os.environ.get("PHILIPPE_TZ")
-    if name:
-        from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo(name))
-    return datetime.now().astimezone()
-
-
-async def hour_nag_loop(runner: Runner, bot: Bot, chat_id: int) -> None:
-    """Every hour at :15 ask the target chat what it did the hour before.
-
-    The bot waits for a *reply* to exactly this question; the reply is stored
-    as one free-text row. Non-replies are left alone entirely.
-    """
-    logger.info("hourly check-in nagging chat %s", chat_id)
-    asked_for = None
-    while True:
-        now = _local_now()
-        anchor = now.replace(minute=0, second=0, microsecond=0)
-        if asked_for is None or asked_for < anchor:
-            if now.minute >= HOUR_ASK_MINUTE:
-                prev = anchor - timedelta(hours=1)  # the hour just ended
-                text = (f"❓ Что делал за {prev.day:02d}.{prev.month:02d} "
-                        f"{prev:%H:%M}–{anchor:%H:%M}?")
-                await bot.send_message(chat_id, text)
-                asked_for = anchor
-        # sleep until next hour's :15:05
-        wake = anchor + timedelta(hours=1, minutes=HOUR_ASK_MINUTE, seconds=5)
-        await asyncio.sleep(max((wake - now).total_seconds(), 5.0))
-
 
 def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dispatcher:
     router = Router()
@@ -514,17 +384,6 @@ def build_dispatcher(runner: Runner, allowed_ids: set[int] | None = None) -> Dis
     @router.message()
     async def on_message(message: Message) -> None:
         chat_id = message.chat.id
-        # Hourly check-in: stateless — the period is parsed from the question
-        # text we're being replied to (it carries the date, e.g.
-        # "❓ Что делал за 25.09 22:00–23:00?"). Late replies to older
-        # questions keep working, no in-memory state to lose on restart.
-        r = message.reply_to_message
-        period = _period_from_question(r) if r is not None else None
-        if period is not None:
-            # a reply to a question overwrites that period's row, whenever it
-            # was first answered
-            await runner.save_hour_reply(message, period)
-            return
         session = runner._sessions.get(chat_id)
         if session is None:
             await message.answer("Send /forms to pick a form.")
@@ -544,7 +403,6 @@ def run_bot(
     catalog=None,
     hydrus_client=None,
     allowed_ids: set[int] | None = None,
-    hour_chat: int | None = None,
 ) -> None:
     runner = Runner(forms, sink, catalog=catalog,
                     hydrus_client=hydrus_client,
@@ -556,16 +414,12 @@ def run_bot(
         from aiogram.types import BotCommand
         logger.info("starting bot with forms: %s%s", ", ".join(forms),
                     f" (whitelist: {len(allowed_ids)} ids)" if allowed_ids else "")
-        if hour_chat is not None:
-            asyncio.create_task(hour_nag_loop(runner, bot, hour_chat))
-        else:
-            logger.info("PHILIPPE_HOUR_CHAT unset — hourly check-in disabled")
         try:
             await bot.set_my_commands([
                 BotCommand(command="forms", description="List forms to fill"),
                 BotCommand(command="start", description="List forms to fill"),
             ])
-            announce_to = hour_chat or (sorted(allowed_ids)[0] if allowed_ids else None)
+            announce_to = sorted(allowed_ids)[0] if allowed_ids else None
             if announce_to:
                 try:
                     await bot.send_message(announce_to,
