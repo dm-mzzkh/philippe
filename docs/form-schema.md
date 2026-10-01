@@ -59,10 +59,9 @@
 
    * title - short single-line text (a name / heading)
       * just type it
-      * or send a voice message → bot transcribes into the field
 
    * text - long multi-line text (a description)
-      * same as title: type it, or send a voice message
+      * just type it
 
    * number - numeric value with range
       * min - lowest accepted value

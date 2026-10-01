@@ -61,13 +61,6 @@ class HydrusClient:
         )
         return bytes(data)
 
-    def download(self, file_hash: str) -> bytes:
-        """Download file by SHA-256 hash."""
-        _, data = self._request(
-            "GET", f"/get_files/file?hash={file_hash}",
-        )
-        return bytes(data)
-
     def tag(self, file_hash: str, tags: list[str]) -> None:
         """Apply tags to a file on the local 'my tags' service."""
         sk = self._tag_service_key

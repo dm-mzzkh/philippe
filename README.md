@@ -11,7 +11,7 @@ table's schema, then refined by hand.
 ## Why
 
 Writing `INSERT` statements by hand is error-prone and unfriendly to
-non-engineers. A Telegram dialog with buttons, voice input, presets and
+non-engineers. A Telegram dialog with buttons, presets and
 validation lets anyone add a well-formed record from their phone, while the
 form definition keeps the data consistent.
 
@@ -39,8 +39,8 @@ answer is validated. The full catalogue of types lives in
 
 | Type | What the user does |
 |------|--------------------|
-| `title` | Short text — typed or sent as a voice message |
-| `text` | Long text — typed or sent as a voice message |
+| `title` | Short text — typed |
+| `text` | Long text — typed |
 | `repeat` | Pick a period (daily / weekly / monthly) and a frequency (1–365) |
 | `bool` | Tap **Yes** / **No** |
 | `date` | Tap a relative day, or type a weekday / `dd.mm` / `dd.mm.yyyy` |
@@ -131,26 +131,22 @@ uv run pytest
 ```
 .
 ├── README.md                # this file
+├── AGENTS.md                # orientation for working in this repo
 ├── docs/
 │   ├── form-schema.md       # full form.yaml field reference
-│   ├── architecture.md      # module structure & design rationale
 │   └── database.md          # how forms map to DB rows; how to run with a DB
 ├── examples/                # form.yaml (showcase), task.yaml + log.yaml (DB)
 ├── db/                      # Postgres schema + docker-compose (home calendar)
-└── src/philippe/            # the package (see docs/architecture.md)
-    ├── forms/               # parse + validate form.yaml
-    ├── fields/              # the field-type catalogue (plugin core)
-    ├── dialog/              # framework-agnostic conversation engine
-    ├── state/               # session storage (port + impls)
-    ├── db/                  # connection, option catalog, per-dialog resolve
-    ├── telegram/            # Telegram adapter (aiogram)
-    ├── sink/                # where finished records go (logging + SQL)
-    └── transcribe/          # voice → text (roadmap)
+└── src/philippe/
+    ├── core.py              # domain: models, field types, engine, loader (pure)
+    ├── _db.py               # connection, SQL catalog + sink, logging sink
+    ├── _telegram.py         # Telegram adapter (aiogram)
+    ├── _hydrus.py           # Hydrus Network client (image hosting)
+    └── cli.py               # arg parsing + config/secret resolution
 ```
 
-The core (`forms`, `fields`, `dialog`) has **no dependency on Telegram, YAML or
-SQL** — those live in adapters at the edges. See
-[docs/architecture.md](docs/architecture.md) for the full rationale.
+The core (`core.py`) has **no dependency on Telegram, YAML or
+SQL** — those live in adapters at the edges.
 
 ## Roadmap
 
@@ -163,12 +159,10 @@ SQL** — those live in adapters at the edges. See
 - [ ] Edit / delete existing rows — history & task management. *(from home_cal)*
 - [ ] Dump / load the whole DB as editable YAML. *(from home_cal)*
 - [ ] Generate a `form.yaml` from a table's schema.
-- [ ] Voice-to-text for `title` / `text` fields.
 
 ## See also
 
 - [docs/form-schema.md](docs/form-schema.md) — the form definition reference.
-- [docs/architecture.md](docs/architecture.md) — module structure & design.
 - [docs/database.md](docs/database.md) — mapping forms to DB rows; running with Postgres.
 - [CLAUDE.md](CLAUDE.md) — orientation for working in this repo (commands, conventions, gotchas).
 - [examples/](examples/) — `task.yaml`, `log.yaml`, `today.yaml`, `history.yaml`, `sleep.yaml`, `sleep-log.yaml`, `workout.yaml`, `workout-log.yaml`, `form.yaml`.

@@ -87,7 +87,7 @@ def message_to_input(message: Message) -> Input:
 
 
 # ponytail: dict[int, Session] beats a three-file Protocol-wrapped store
-from .core import Attachment, SelectSpec
+from .core import Attachment
 
 
 class Runner:
@@ -105,13 +105,7 @@ class Runner:
 
     async def new_session(self, name: str) -> Session:
         base = self.forms[name]
-        has_dynamic = any(
-            isinstance(s, SelectSpec) and s.is_dynamic for s in base.fields
-        )
-        if has_dynamic:
-            form = await asyncio.to_thread(resolve_form, base, self.catalog)
-        else:
-            form = resolve_form(base, self.catalog)
+        form = await asyncio.to_thread(resolve_form, base, self.catalog)
         return Session(form=form)
 
     def _menu_prompt(self) -> Prompt:

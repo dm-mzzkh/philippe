@@ -55,16 +55,6 @@ def test_upload_returns_sha256_hash(monkeypatch):
     assert req[2] == blob  # raw bytes body
 
 
-def test_download_returns_blob(monkeypatch):
-    blob = b"stored data"
-    handler = FakeHTTPHandler()
-    handler.add("GET", "/get_files/file", blob)
-    monkeypatch.setattr("urllib.request.urlopen", handler)
-
-    client = HydrusClient("http://fake:45869", "key123")
-    assert client.download("abcdef") == blob
-
-
 def test_upload_http_error_raises_hydrus_error(monkeypatch):
     def _fail(req):
         raise _http_error(500, "Internal Server Error")
